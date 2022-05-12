@@ -22,6 +22,7 @@ import warnings
 from collections import deque
 from io import SEEK_END, BytesIO
 from typing import (
+    AnyStr,
     Callable,
     Dict,
     Iterable,
@@ -53,18 +54,13 @@ from twisted.internet.interfaces import (
     ITransport,
 )
 from twisted.python.failure import Failure
-from twisted.test.proto_helpers import (
-    AccumulatingProtocol,
-    MemoryReactor,
-    MemoryReactorClock,
-)
+from twisted.test.proto_helpers import AccumulatingProtocol, MemoryReactorClock
 from twisted.web.http_headers import Headers
 from twisted.web.resource import IResource
 from twisted.web.server import Request, Site
 
 from synapse.config.database import DatabaseConnectionConfig
 from synapse.http.site import SynapseRequest
-from synapse.logging.context import ContextResourceUsage
 from synapse.server import HomeServer
 from synapse.storage import DataStore
 from synapse.storage.engines import PostgresEngine, create_engine
@@ -76,7 +72,6 @@ from tests.utils import (
     POSTGRES_BASE_DB,
     POSTGRES_HOST,
     POSTGRES_PASSWORD,
-    POSTGRES_PORT,
     POSTGRES_USER,
     SQLITE_PERSIST_DB,
     USE_POSTGRES_FOR_TESTS,
@@ -86,9 +81,6 @@ from tests.utils import (
 
 logger = logging.getLogger(__name__)
 
-# the type of thing that can be passed into `make_request` in the headers list
-CustomHeaderType = Tuple[Union[str, bytes], Union[str, bytes]]
-
 
 class TimedOutException(Exception):
     """
@@ -96,19 +88,18 @@ class TimedOutException(Exception):
     """
 
 
-@attr.s(auto_attribs=True)
+@attr.s
 class FakeChannel:
     """
     A fake Twisted Web Channel (the part that interfaces with the
     wire).
     """
 
-    site: Union[Site, "FakeSite"]
-    _reactor: MemoryReactor
-    result: dict = attr.Factory(dict)
-    _ip: str = "127.0.0.1"
+    site = attr.ib(type=Union[Site, "FakeSite"])
+    _reactor = attr.ib()
+    result = attr.ib(type=dict, default=attr.Factory(dict))
+    _ip = attr.ib(type=str, default="127.0.0.1")
     _producer: Optional[Union[IPullProducer, IPushProducer]] = None
-    resource_usage: Optional[ContextResourceUsage] = None
 
     @property
     def json_body(self):
@@ -177,11 +168,9 @@ class FakeChannel:
 
     def requestDone(self, _self):
         self.result["done"] = True
-        if isinstance(_self, SynapseRequest):
-            self.resource_usage = _self.logcontext.get_resource_usage()
 
     def getPeer(self):
-        # We give an address so that getClientAddress/getClientIP returns a non null entry,
+        # We give an address so that getClientIP returns a non null entry,
         # causing us to record the MAU
         return address.IPv4Address("TCP", self._ip, 3423)
 
@@ -263,7 +252,7 @@ def make_request(
     federation_auth_origin: Optional[bytes] = None,
     content_is_form: bool = False,
     await_result: bool = True,
-    custom_headers: Optional[Iterable[CustomHeaderType]] = None,
+    custom_headers: Optional[Iterable[Tuple[AnyStr, AnyStr]]] = None,
     client_ip: str = "127.0.0.1",
 ) -> FakeChannel:
     """
@@ -562,10 +551,7 @@ class FakeTransport:
     """
 
     _peer_address: Optional[IAddress] = attr.ib(default=None)
-    """The value to be returned by getPeer"""
-
-    _host_address: Optional[IAddress] = attr.ib(default=None)
-    """The value to be returned by getHost"""
+    """The value to be returend by getPeer"""
 
     disconnecting = False
     disconnected = False
@@ -574,11 +560,11 @@ class FakeTransport:
     producer = attr.ib(default=None)
     autoflush = attr.ib(default=True)
 
-    def getPeer(self) -> Optional[IAddress]:
+    def getPeer(self):
         return self._peer_address
 
-    def getHost(self) -> Optional[IAddress]:
-        return self._host_address
+    def getHost(self):
+        return None
 
     def loseConnection(self, reason=None):
         if not self.disconnecting:
@@ -751,7 +737,6 @@ def setup_test_homeserver(
                 "host": POSTGRES_HOST,
                 "password": POSTGRES_PASSWORD,
                 "user": POSTGRES_USER,
-                "port": POSTGRES_PORT,
                 "cp_min": 1,
                 "cp_max": 5,
             },
@@ -791,7 +776,6 @@ def setup_test_homeserver(
             database=POSTGRES_BASE_DB,
             user=POSTGRES_USER,
             host=POSTGRES_HOST,
-            port=POSTGRES_PORT,
             password=POSTGRES_PASSWORD,
         )
         db_conn.autocommit = True
@@ -839,7 +823,6 @@ def setup_test_homeserver(
                 database=POSTGRES_BASE_DB,
                 user=POSTGRES_USER,
                 host=POSTGRES_HOST,
-                port=POSTGRES_PORT,
                 password=POSTGRES_PASSWORD,
             )
             db_conn.autocommit = True

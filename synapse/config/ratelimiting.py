@@ -12,11 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 import attr
-
-from synapse.types import JsonDict
 
 from ._base import Config
 
@@ -45,7 +43,7 @@ class FederationRateLimitConfig:
 class RatelimitConfig(Config):
     section = "ratelimiting"
 
-    def read_config(self, config: JsonDict, **kwargs: Any) -> None:
+    def read_config(self, config, **kwargs):
 
         # Load the new-style messages config if it exists. Otherwise fall back
         # to the old method.
@@ -144,7 +142,7 @@ class RatelimitConfig(Config):
             },
         )
 
-    def generate_config_section(self, **kwargs: Any) -> str:
+    def generate_config_section(self, **kwargs):
         return """\
         ## Ratelimiting ##
 

@@ -11,17 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Any, Awaitable, Callable, Dict
+from typing import Any, Dict
 from unittest.mock import Mock
-
-from twisted.test.proto_helpers import MemoryReactor
 
 import synapse.types
 from synapse.api.errors import AuthError, SynapseError
 from synapse.rest import admin
 from synapse.server import HomeServer
-from synapse.types import JsonDict, UserID
-from synapse.util import Clock
+from synapse.types import UserID
 
 from tests import unittest
 from tests.test_utils import make_awaitable
@@ -32,15 +29,13 @@ class ProfileTestCase(unittest.HomeserverTestCase):
 
     servlets = [admin.register_servlets]
 
-    def make_homeserver(self, reactor: MemoryReactor, clock: Clock) -> HomeServer:
+    def make_homeserver(self, reactor, clock):
         self.mock_federation = Mock()
         self.mock_registry = Mock()
 
-        self.query_handlers: Dict[str, Callable[[dict], Awaitable[JsonDict]]] = {}
+        self.query_handlers = {}
 
-        def register_query_handler(
-            query_type: str, handler: Callable[[dict], Awaitable[JsonDict]]
-        ) -> None:
+        def register_query_handler(query_type, handler):
             self.query_handlers[query_type] = handler
 
         self.mock_registry.register_query_handler = register_query_handler
@@ -52,18 +47,18 @@ class ProfileTestCase(unittest.HomeserverTestCase):
         )
         return hs
 
-    def prepare(self, reactor: MemoryReactor, clock: Clock, hs: HomeServer) -> None:
+    def prepare(self, reactor, clock, hs: HomeServer):
         self.store = hs.get_datastores().main
 
         self.frank = UserID.from_string("@1234abcd:test")
         self.bob = UserID.from_string("@4567:test")
         self.alice = UserID.from_string("@alice:remote")
 
-        self.register_user(self.frank.localpart, "frankpassword")
+        self.get_success(self.register_user(self.frank.localpart, "frankpassword"))
 
         self.handler = hs.get_profile_handler()
 
-    def test_get_my_name(self) -> None:
+    def test_get_my_name(self):
         self.get_success(
             self.store.set_profile_displayname(self.frank.localpart, "Frank")
         )
@@ -72,7 +67,7 @@ class ProfileTestCase(unittest.HomeserverTestCase):
 
         self.assertEqual("Frank", displayname)
 
-    def test_set_my_name(self) -> None:
+    def test_set_my_name(self):
         self.get_success(
             self.handler.set_displayname(
                 self.frank, synapse.types.create_requester(self.frank), "Frank Jr."
@@ -115,7 +110,7 @@ class ProfileTestCase(unittest.HomeserverTestCase):
             self.get_success(self.store.get_profile_displayname(self.frank.localpart))
         )
 
-    def test_set_my_name_if_disabled(self) -> None:
+    def test_set_my_name_if_disabled(self):
         self.hs.config.registration.enable_set_displayname = False
 
         # Setting displayname for the first time is allowed
@@ -140,7 +135,7 @@ class ProfileTestCase(unittest.HomeserverTestCase):
             SynapseError,
         )
 
-    def test_set_my_name_noauth(self) -> None:
+    def test_set_my_name_noauth(self):
         self.get_failure(
             self.handler.set_displayname(
                 self.frank, synapse.types.create_requester(self.bob), "Frank Jr."
@@ -148,7 +143,7 @@ class ProfileTestCase(unittest.HomeserverTestCase):
             AuthError,
         )
 
-    def test_get_other_name(self) -> None:
+    def test_get_other_name(self):
         self.mock_federation.make_query.return_value = make_awaitable(
             {"displayname": "Alice"}
         )
@@ -163,7 +158,7 @@ class ProfileTestCase(unittest.HomeserverTestCase):
             ignore_backoff=True,
         )
 
-    def test_incoming_fed_query(self) -> None:
+    def test_incoming_fed_query(self):
         self.get_success(self.store.create_profile("caroline"))
         self.get_success(self.store.set_profile_displayname("caroline", "Caroline"))
 
@@ -179,7 +174,7 @@ class ProfileTestCase(unittest.HomeserverTestCase):
 
         self.assertEqual({"displayname": "Caroline"}, response)
 
-    def test_get_my_avatar(self) -> None:
+    def test_get_my_avatar(self):
         self.get_success(
             self.store.set_profile_avatar_url(
                 self.frank.localpart, "http://my.server/me.png"
@@ -189,7 +184,7 @@ class ProfileTestCase(unittest.HomeserverTestCase):
 
         self.assertEqual("http://my.server/me.png", avatar_url)
 
-    def test_set_my_avatar(self) -> None:
+    def test_set_my_avatar(self):
         self.get_success(
             self.handler.set_avatar_url(
                 self.frank,
@@ -230,7 +225,7 @@ class ProfileTestCase(unittest.HomeserverTestCase):
             (self.get_success(self.store.get_profile_avatar_url(self.frank.localpart))),
         )
 
-    def test_set_my_avatar_if_disabled(self) -> None:
+    def test_set_my_avatar_if_disabled(self):
         self.hs.config.registration.enable_set_avatar_url = False
 
         # Setting displayname for the first time is allowed
@@ -255,7 +250,7 @@ class ProfileTestCase(unittest.HomeserverTestCase):
             SynapseError,
         )
 
-    def test_avatar_constraints_no_config(self) -> None:
+    def test_avatar_constraints_no_config(self):
         """Tests that the method to check an avatar against configured constraints skips
         all of its check if no constraint is configured.
         """
@@ -268,13 +263,7 @@ class ProfileTestCase(unittest.HomeserverTestCase):
         self.assertTrue(res)
 
     @unittest.override_config({"max_avatar_size": 50})
-    def test_avatar_constraints_allow_empty_avatar_url(self) -> None:
-        """An empty avatar is always permitted."""
-        res = self.get_success(self.handler.check_avatar_size_and_mime_type(""))
-        self.assertTrue(res)
-
-    @unittest.override_config({"max_avatar_size": 50})
-    def test_avatar_constraints_missing(self) -> None:
+    def test_avatar_constraints_missing(self):
         """Tests that an avatar isn't allowed if the file at the given MXC URI couldn't
         be found.
         """
@@ -284,7 +273,7 @@ class ProfileTestCase(unittest.HomeserverTestCase):
         self.assertFalse(res)
 
     @unittest.override_config({"max_avatar_size": 50})
-    def test_avatar_constraints_file_size(self) -> None:
+    def test_avatar_constraints_file_size(self):
         """Tests that a file that's above the allowed file size is forbidden but one
         that's below it is allowed.
         """
@@ -306,7 +295,7 @@ class ProfileTestCase(unittest.HomeserverTestCase):
         self.assertFalse(res)
 
     @unittest.override_config({"allowed_avatar_mimetypes": ["image/png"]})
-    def test_avatar_constraint_mime_type(self) -> None:
+    def test_avatar_constraint_mime_type(self):
         """Tests that a file with an unauthorised MIME type is forbidden but one with
         an authorised content type is allowed.
         """

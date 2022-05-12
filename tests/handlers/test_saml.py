@@ -12,16 +12,12 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from typing import Any, Dict, Optional
+from typing import Optional
 from unittest.mock import Mock
 
 import attr
 
-from twisted.test.proto_helpers import MemoryReactor
-
 from synapse.api.errors import RedirectException
-from synapse.server import HomeServer
-from synapse.util import Clock
 
 from tests.test_utils import simple_async_mock
 from tests.unittest import HomeserverTestCase, override_config
@@ -85,10 +81,10 @@ class TestRedirectMappingProvider(TestMappingProvider):
 
 
 class SamlHandlerTestCase(HomeserverTestCase):
-    def default_config(self) -> Dict[str, Any]:
+    def default_config(self):
         config = super().default_config()
         config["public_baseurl"] = BASE_URL
-        saml_config: Dict[str, Any] = {
+        saml_config = {
             "sp_config": {"metadata": {}},
             # Disable grandfathering.
             "grandfathered_mxid_source_attribute": None,
@@ -102,7 +98,7 @@ class SamlHandlerTestCase(HomeserverTestCase):
 
         return config
 
-    def make_homeserver(self, reactor: MemoryReactor, clock: Clock) -> HomeServer:
+    def make_homeserver(self, reactor, clock):
         hs = self.setup_test_homeserver()
 
         self.handler = hs.get_saml_handler()
@@ -118,7 +114,7 @@ class SamlHandlerTestCase(HomeserverTestCase):
     elif not has_xmlsec1:
         skip = "Requires xmlsec1"
 
-    def test_map_saml_response_to_user(self) -> None:
+    def test_map_saml_response_to_user(self):
         """Ensure that mapping the SAML response returned from a provider to an MXID works properly."""
 
         # stub out the auth handler
@@ -144,7 +140,7 @@ class SamlHandlerTestCase(HomeserverTestCase):
         )
 
     @override_config({"saml2_config": {"grandfathered_mxid_source_attribute": "mxid"}})
-    def test_map_saml_response_to_existing_user(self) -> None:
+    def test_map_saml_response_to_existing_user(self):
         """Existing users can log in with SAML account."""
         store = self.hs.get_datastores().main
         self.get_success(
@@ -190,7 +186,7 @@ class SamlHandlerTestCase(HomeserverTestCase):
             auth_provider_session_id=None,
         )
 
-    def test_map_saml_response_to_invalid_localpart(self) -> None:
+    def test_map_saml_response_to_invalid_localpart(self):
         """If the mapping provider generates an invalid localpart it should be rejected."""
 
         # stub out the auth handler
@@ -211,7 +207,7 @@ class SamlHandlerTestCase(HomeserverTestCase):
         )
         auth_handler.complete_sso_login.assert_not_called()
 
-    def test_map_saml_response_to_user_retries(self) -> None:
+    def test_map_saml_response_to_user_retries(self):
         """The mapping provider can retry generating an MXID if the MXID is already in use."""
 
         # stub out the auth handler and error renderer
@@ -275,7 +271,7 @@ class SamlHandlerTestCase(HomeserverTestCase):
             }
         }
     )
-    def test_map_saml_response_redirect(self) -> None:
+    def test_map_saml_response_redirect(self):
         """Test a mapping provider that raises a RedirectException"""
 
         saml_response = FakeAuthnResponse({"uid": "test", "username": "test_user"})
@@ -296,7 +292,7 @@ class SamlHandlerTestCase(HomeserverTestCase):
             },
         }
     )
-    def test_attribute_requirements(self) -> None:
+    def test_attribute_requirements(self):
         """The required attributes must be met from the SAML response."""
 
         # stub out the auth handler
@@ -349,16 +345,4 @@ class SamlHandlerTestCase(HomeserverTestCase):
 
 def _mock_request():
     """Returns a mock which will stand in as a SynapseRequest"""
-    mock = Mock(
-        spec=[
-            "finish",
-            "getClientAddress",
-            "getHeader",
-            "setHeader",
-            "setResponseCode",
-            "write",
-        ]
-    )
-    # `_disconnected` musn't be another `Mock`, otherwise it will be truthy.
-    mock._disconnected = False
-    return mock
+    return Mock(spec=["getClientIP", "getHeader", "_disconnected"])

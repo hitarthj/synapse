@@ -46,7 +46,6 @@ from synapse.logging.opentracing import (
     noop_context_manager,
     start_active_span,
 )
-from synapse.metrics._types import Collector
 
 if TYPE_CHECKING:
     import resource
@@ -128,7 +127,7 @@ _background_processes_active_since_last_scrape: "Set[_BackgroundProcess]" = set(
 _bg_metrics_lock = threading.Lock()
 
 
-class _Collector(Collector):
+class _Collector:
     """A custom metrics collector for the background process metrics.
 
     Ensures that all of the metrics are up-to-date with any in-flight processes

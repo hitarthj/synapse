@@ -30,8 +30,6 @@ from prometheus_client.core import (
 
 from twisted.internet import task
 
-from synapse.metrics._types import Collector
-
 """Prometheus metrics for garbage collection"""
 
 
@@ -73,7 +71,7 @@ gc_time = Histogram(
 )
 
 
-class GCCounts(Collector):
+class GCCounts:
     def collect(self) -> Iterable[Metric]:
         cm = GaugeMetricFamily("python_gc_counts", "GC object counts", labels=["gen"])
         for n, m in enumerate(gc.get_count()):
@@ -137,7 +135,7 @@ def install_gc_manager() -> None:
 #
 
 
-class PyPyGCStats(Collector):
+class PyPyGCStats:
     def collect(self) -> Iterable[Metric]:
 
         # @stats is a pretty-printer object with __str__() returning a nice table,

@@ -154,12 +154,10 @@ class BaseStreamTestCase(unittest.HomeserverTestCase):
         self.assertEqual(port, 8765)
 
         # Set up client side protocol
-        client_address = IPv4Address("TCP", "127.0.0.1", 1234)
-        client_protocol = client_factory.buildProtocol(("127.0.0.1", 1234))
+        client_protocol = client_factory.buildProtocol(None)
 
         # Set up the server side protocol
-        server_address = IPv4Address("TCP", host, port)
-        channel = self.site.buildProtocol((host, port))
+        channel = self.site.buildProtocol(None)
 
         # hook into the channel's request factory so that we can keep a record
         # of the requests
@@ -175,12 +173,12 @@ class BaseStreamTestCase(unittest.HomeserverTestCase):
 
         # Connect client to server and vice versa.
         client_to_server_transport = FakeTransport(
-            channel, self.reactor, client_protocol, server_address, client_address
+            channel, self.reactor, client_protocol
         )
         client_protocol.makeConnection(client_to_server_transport)
 
         server_to_client_transport = FakeTransport(
-            client_protocol, self.reactor, channel, client_address, server_address
+            client_protocol, self.reactor, channel
         )
         channel.makeConnection(server_to_client_transport)
 
@@ -208,7 +206,7 @@ class BaseStreamTestCase(unittest.HomeserverTestCase):
         path: bytes = request.path  # type: ignore
         self.assertRegex(
             path,
-            rb"^/_synapse/replication/get_repl_stream_updates/%s/[^/]+$"
+            br"^/_synapse/replication/get_repl_stream_updates/%s/[^/]+$"
             % (stream_name.encode("ascii"),),
         )
 
@@ -408,21 +406,19 @@ class BaseMultiWorkerStreamTestCase(unittest.HomeserverTestCase):
         self.assertEqual(port, repl_port)
 
         # Set up client side protocol
-        client_address = IPv4Address("TCP", "127.0.0.1", 1234)
-        client_protocol = client_factory.buildProtocol(("127.0.0.1", 1234))
+        client_protocol = client_factory.buildProtocol(None)
 
         # Set up the server side protocol
-        server_address = IPv4Address("TCP", host, port)
-        channel = self._hs_to_site[hs].buildProtocol((host, port))
+        channel = self._hs_to_site[hs].buildProtocol(None)
 
         # Connect client to server and vice versa.
         client_to_server_transport = FakeTransport(
-            channel, self.reactor, client_protocol, server_address, client_address
+            channel, self.reactor, client_protocol
         )
         client_protocol.makeConnection(client_to_server_transport)
 
         server_to_client_transport = FakeTransport(
-            client_protocol, self.reactor, channel, client_address, server_address
+            client_protocol, self.reactor, channel
         )
         channel.makeConnection(server_to_client_transport)
 

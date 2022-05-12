@@ -54,10 +54,11 @@ class SearchHandler:
         self.clock = hs.get_clock()
         self.hs = hs
         self._event_serializer = hs.get_event_client_serializer()
-        self._relations_handler = hs.get_relations_handler()
         self.storage = hs.get_storage()
         self.state_store = self.storage.state
         self.auth = hs.get_auth()
+
+        self._msc3666_enabled = hs.config.experimental.msc3666_enabled
 
     async def get_old_rooms_from_upgraded_room(self, room_id: str) -> Iterable[str]:
         """Retrieves room IDs of old rooms in the history of an upgraded room.
@@ -351,20 +352,22 @@ class SearchHandler:
                 state = await self.state_handler.get_current_state(room_id)
                 state_results[room_id] = list(state.values())
 
-        aggregations = await self._relations_handler.get_bundled_aggregations(
-            # Generate an iterable of EventBase for all the events that will be
-            # returned, including contextual events.
-            itertools.chain(
-                # The events_before and events_after for each context.
-                itertools.chain.from_iterable(
-                    itertools.chain(context["events_before"], context["events_after"])
-                    for context in contexts.values()
+        aggregations = None
+        if self._msc3666_enabled:
+            aggregations = await self.store.get_bundled_aggregations(
+                # Generate an iterable of EventBase for all the events that will be
+                # returned, including contextual events.
+                itertools.chain(
+                    # The events_before and events_after for each context.
+                    itertools.chain.from_iterable(
+                        itertools.chain(context["events_before"], context["events_after"])  # type: ignore[arg-type]
+                        for context in contexts.values()
+                    ),
+                    # The returned events.
+                    search_result.allowed_events,
                 ),
-                # The returned events.
-                search_result.allowed_events,
-            ),
-            user.to_string(),
-        )
+                user.to_string(),
+            )
 
         # We're now about to serialize the events. We should not make any
         # blocking calls after this. Otherwise, the 'age' will be wrong.
@@ -373,10 +376,10 @@ class SearchHandler:
 
         for context in contexts.values():
             context["events_before"] = self._event_serializer.serialize_events(
-                context["events_before"], time_now, bundle_aggregations=aggregations
+                context["events_before"], time_now, bundle_aggregations=aggregations  # type: ignore[arg-type]
             )
             context["events_after"] = self._event_serializer.serialize_events(
-                context["events_after"], time_now, bundle_aggregations=aggregations
+                context["events_after"], time_now, bundle_aggregations=aggregations  # type: ignore[arg-type]
             )
 
         results = [

@@ -258,7 +258,7 @@ class MediaRepository:
         # We linearize here to ensure that we don't try and download remote
         # media multiple times concurrently
         key = (server_name, media_id)
-        async with self.remote_media_linearizer.queue(key):
+        with (await self.remote_media_linearizer.queue(key)):
             responder, media_info = await self._get_remote_media_impl(
                 server_name, media_id
             )
@@ -294,7 +294,7 @@ class MediaRepository:
         # We linearize here to ensure that we don't try and download remote
         # media multiple times concurrently
         key = (server_name, media_id)
-        async with self.remote_media_linearizer.queue(key):
+        with (await self.remote_media_linearizer.queue(key)):
             responder, media_info = await self._get_remote_media_impl(
                 server_name, media_id
             )
@@ -850,7 +850,7 @@ class MediaRepository:
 
             # TODO: Should we delete from the backup store
 
-            async with self.remote_media_linearizer.queue(key):
+            with (await self.remote_media_linearizer.queue(key)):
                 full_path = self.filepaths.remote_media_filepath(origin, file_id)
                 try:
                     os.remove(full_path)

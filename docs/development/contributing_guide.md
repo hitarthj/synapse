@@ -48,28 +48,19 @@ can find many good git tutorials on the web.
 
 # 4. Install the dependencies
 
-Synapse uses the [poetry](https://python-poetry.org/) project to manage its dependencies
-and development environment. Once you have installed Python 3 and added the
-source, you should install `poetry`.
-Of their installation methods, we recommend
-[installing `poetry` using `pipx`](https://python-poetry.org/docs/#installing-with-pipx),
-
-```shell
-pip install --user pipx
-pipx install poetry
-```
-
-but see poetry's [installation instructions](https://python-poetry.org/docs/#installation)
-for other installation methods.
-
-Next, open a terminal and install dependencies as follows:
+Once you have installed Python 3 and added the source, please open a terminal and
+setup a *virtualenv*, as follows:
 
 ```sh
 cd path/where/you/have/cloned/the/repository
-poetry install --extras all
+python3 -m venv ./env
+source ./env/bin/activate
+pip install wheel
+pip install -e ".[all,dev]"
+pip install tox
 ```
 
-This will install the runtime and developer dependencies for the project.
+This will install the developer dependencies for the project.
 
 
 # 5. Get in touch.
@@ -126,10 +117,11 @@ The linters look at your code and do two things:
 - ensure that your code follows the coding style adopted by the project;
 - catch a number of errors in your code.
 
-The linter takes no time at all to run as soon as you've [downloaded the dependencies](#4-install-the-dependencies).
+The linter takes no time at all to run as soon as you've [downloaded the dependencies into your python virtual environment](#4-install-the-dependencies).
 
 ```sh
-poetry run ./scripts-dev/lint.sh
+source ./env/bin/activate
+./scripts-dev/lint.sh
 ```
 
 Note that this script *will modify your files* to fix styling errors.
@@ -139,13 +131,15 @@ If you wish to restrict the linters to only the files changed since the last com
 (much faster!), you can instead run:
 
 ```sh
-poetry run ./scripts-dev/lint.sh -d
+source ./env/bin/activate
+./scripts-dev/lint.sh -d
 ```
 
 Or if you know exactly which files you wish to lint, you can instead run:
 
 ```sh
-poetry run ./scripts-dev/lint.sh path/to/file1.py path/to/file2.py path/to/folder
+source ./env/bin/activate
+./scripts-dev/lint.sh path/to/file1.py path/to/file2.py path/to/folder
 ```
 
 ## Run the unit tests (Twisted trial).
@@ -154,14 +148,16 @@ The unit tests run parts of Synapse, including your changes, to see if anything
 was broken. They are slower than the linters but will typically catch more errors.
 
 ```sh
-poetry run trial tests
+source ./env/bin/activate
+trial tests
 ```
 
 If you wish to only run *some* unit tests, you may specify
 another module instead of `tests` - or a test class or a method:
 
 ```sh
-poetry run trial tests.rest.admin.test_room tests.handlers.test_admin.ExfiltrateData.test_invite
+source ./env/bin/activate
+trial tests.rest.admin.test_room tests.handlers.test_admin.ExfiltrateData.test_invite
 ```
 
 If your tests fail, you may wish to look at the logs (the default log level is `ERROR`):
@@ -173,7 +169,7 @@ less _trial_temp/test.log
 To increase the log level for the tests, set `SYNAPSE_TEST_LOG_LEVEL`:
 
 ```sh
-SYNAPSE_TEST_LOG_LEVEL=DEBUG poetry run trial tests
+SYNAPSE_TEST_LOG_LEVEL=DEBUG trial tests
 ```
 
 By default, tests will use an in-memory SQLite database for test data. For additional
@@ -184,7 +180,7 @@ database state to be stored in a file named `test.db` under the trial process'
 working directory. Typically, this ends up being `_trial_temp/test.db`. For example:
 
 ```sh
-SYNAPSE_TEST_PERSIST_SQLITE_DB=1 poetry run trial tests
+SYNAPSE_TEST_PERSIST_SQLITE_DB=1 trial tests
 ```
 
 The database file can then be inspected with:
@@ -210,10 +206,9 @@ To do so, [configure Postgres](../postgres.md) and run `trial` with the
 following environment variables matching your configuration:
 
 - `SYNAPSE_POSTGRES` to anything nonempty
-- `SYNAPSE_POSTGRES_HOST` (optional if it's the default: UNIX socket)
-- `SYNAPSE_POSTGRES_PORT` (optional if it's the default: 5432)
-- `SYNAPSE_POSTGRES_USER` (optional if using a UNIX socket)
-- `SYNAPSE_POSTGRES_PASSWORD` (optional if using a UNIX socket)
+- `SYNAPSE_POSTGRES_HOST`
+- `SYNAPSE_POSTGRES_USER`
+- `SYNAPSE_POSTGRES_PASSWORD`
 
 For example:
 
@@ -225,12 +220,26 @@ export SYNAPSE_POSTGRES_PASSWORD=mydevenvpassword
 trial
 ```
 
-You don't need to specify the host, user, port or password if your Postgres
-server is set to authenticate you over the UNIX socket (i.e. if the `psql` command
-works without further arguments).
+#### Prebuilt container
 
-Your Postgres account needs to be able to create databases.
+Since configuring PostgreSQL can be fiddly, we can make use of a pre-made
+Docker container to set up PostgreSQL and run our tests for us. To do so, run
 
+```shell
+scripts-dev/test_postgresql.sh
+```
+
+Any extra arguments to the script will be passed to `tox` and then to `trial`,
+so we can run a specific test in this container with e.g.
+
+```shell
+scripts-dev/test_postgresql.sh tests.replication.test_sharded_event_persister.EventPersisterShardTestCase
+```
+
+The container creates a folder in your Synapse checkout called
+`.tox-pg-container` and uses this as a tox environment. The output of any
+`trial` runs goes into `_trial_temp` in your synapse source directory — the same
+as running `trial` directly on your host machine.
 
 ## Run the integration tests ([Sytest](https://github.com/matrix-org/sytest)).
 
@@ -245,14 +254,8 @@ configuration:
 ```sh
 $ docker run --rm -it -v /path/where/you/have/cloned/the/repository\:/src:ro -v /path/to/where/you/want/logs\:/logs matrixdotorg/sytest-synapse:buster
 ```
-(Note that the paths must be full paths! You could also write `$(realpath relative/path)` if needed.)
 
-This configuration should generally cover your needs.
-
-- To run with Postgres, supply the `-e POSTGRES=1 -e MULTI_POSTGRES=1` environment flags.
-- To run with Synapse in worker mode, supply the `-e WORKERS=1 -e REDIS=1` environment flags (in addition to the Postgres flags).
-
-For more details about other configurations, see the [Docker-specific documentation in the SyTest repo](https://github.com/matrix-org/sytest/blob/develop/docker/README.md).
+This configuration should generally cover  your needs. For more details about other configurations, see [documentation in the SyTest repo](https://github.com/matrix-org/sytest/blob/develop/docker/README.md).
 
 
 ## Run the integration tests ([Complement](https://github.com/matrix-org/complement)).

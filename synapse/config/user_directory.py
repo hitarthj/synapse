@@ -12,10 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any
-
-from synapse.types import JsonDict
-
 from ._base import Config
 
 
@@ -26,7 +22,7 @@ class UserDirectoryConfig(Config):
 
     section = "userdirectory"
 
-    def read_config(self, config: JsonDict, **kwargs: Any) -> None:
+    def read_config(self, config, **kwargs):
         user_directory_config = config.get("user_directory") or {}
         self.user_directory_search_enabled = user_directory_config.get("enabled", True)
         self.user_directory_search_all_users = user_directory_config.get(
@@ -36,7 +32,7 @@ class UserDirectoryConfig(Config):
             "prefer_local_users", False
         )
 
-    def generate_config_section(self, **kwargs: Any) -> str:
+    def generate_config_section(self, config_dir_path, server_name, **kwargs):
         return """
         # User Directory configuration
         #

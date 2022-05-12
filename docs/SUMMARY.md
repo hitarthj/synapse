@@ -17,7 +17,6 @@
 # Usage
   - [Federation](federate.md)
   - [Configuration](usage/configuration/README.md)
-    - [Configuration Manual](usage/configuration/config_documentation.md) 
     - [Homeserver Sample Config File](usage/configuration/homeserver_sample_config.md)
     - [Logging Sample Config File](usage/configuration/logging_sample_config.md)
     - [Structured Logging](structured_logging.md)
@@ -46,7 +45,6 @@
         - [Account validity callbacks](modules/account_validity_callbacks.md)
         - [Password auth provider callbacks](modules/password_auth_provider_callbacks.md)
         - [Background update controller callbacks](modules/background_update_controller_callbacks.md)
-        - [Account data callbacks](modules/account_data_callbacks.md)
         - [Porting a legacy module to the new interface](modules/porting_legacy_module.md)
     - [Workers](workers.md)
       - [Using `synctl` with Workers](synctl_workers.md)

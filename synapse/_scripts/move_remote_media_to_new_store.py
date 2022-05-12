@@ -42,7 +42,7 @@ from synapse.rest.media.v1.filepath import MediaFilePaths
 logger = logging.getLogger()
 
 
-def main(src_repo: str, dest_repo: str) -> None:
+def main(src_repo, dest_repo):
     src_paths = MediaFilePaths(src_repo)
     dest_paths = MediaFilePaths(dest_repo)
     for line in sys.stdin:
@@ -55,19 +55,14 @@ def main(src_repo: str, dest_repo: str) -> None:
         move_media(parts[0], parts[1], src_paths, dest_paths)
 
 
-def move_media(
-    origin_server: str,
-    file_id: str,
-    src_paths: MediaFilePaths,
-    dest_paths: MediaFilePaths,
-) -> None:
+def move_media(origin_server, file_id, src_paths, dest_paths):
     """Move the given file, and any thumbnails, to the dest repo
 
     Args:
-        origin_server:
-        file_id:
-        src_paths:
-        dest_paths:
+        origin_server (str):
+        file_id (str):
+        src_paths (MediaFilePaths):
+        dest_paths (MediaFilePaths):
     """
     logger.info("%s/%s", origin_server, file_id)
 
@@ -96,7 +91,7 @@ def move_media(
     )
 
 
-def mkdir_and_move(original_file: str, dest_file: str) -> None:
+def mkdir_and_move(original_file, dest_file):
     dirname = os.path.dirname(dest_file)
     if not os.path.exists(dirname):
         logger.debug("mkdir %s", dirname)
@@ -114,9 +109,10 @@ if __name__ == "__main__":
     parser.add_argument("dest_repo", help="Path to source content repo")
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=logging.DEBUG if args.v else logging.INFO,
-        format="%(asctime)s - %(name)s - %(lineno)d - %(levelname)s - %(message)s",
-    )
+    logging_config = {
+        "level": logging.DEBUG if args.v else logging.INFO,
+        "format": "%(asctime)s - %(name)s - %(lineno)d - %(levelname)s - %(message)s",
+    }
+    logging.basicConfig(**logging_config)
 
     main(args.src_repo, args.dest_repo)

@@ -14,7 +14,6 @@
 
 import logging
 import threading
-from enum import Enum, auto
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -23,6 +22,7 @@ from typing import (
     Dict,
     Iterable,
     List,
+    NoReturn,
     Optional,
     Set,
     Tuple,
@@ -31,6 +31,7 @@ from typing import (
 )
 
 import attr
+from constantly import NamedConstant, Names
 from prometheus_client import Gauge
 from typing_extensions import Literal
 
@@ -75,7 +76,7 @@ from synapse.storage.util.id_generators import (
 from synapse.storage.util.sequence import build_sequence_generator
 from synapse.types import JsonDict, get_domain_from_id
 from synapse.util import unwrapFirstError
-from synapse.util.async_helpers import ObservableDeferred, delay_cancellation
+from synapse.util.async_helpers import ObservableDeferred
 from synapse.util.caches.descriptors import cached, cachedList
 from synapse.util.caches.lrucache import LruCache
 from synapse.util.iterutils import batch_iter
@@ -150,14 +151,14 @@ class _EventRow:
     outlier: bool
 
 
-class EventRedactBehaviour(Enum):
+class EventRedactBehaviour(Names):
     """
     What to do when retrieving a redacted event from the database.
     """
 
-    as_is = auto()
-    redact = auto()
-    block = auto()
+    AS_IS = NamedConstant()
+    REDACT = NamedConstant()
+    BLOCK = NamedConstant()
 
 
 class EventsWorkerStore(SQLBaseStore):
@@ -303,31 +304,13 @@ class EventsWorkerStore(SQLBaseStore):
             desc="get_received_ts",
         )
 
-    async def have_censored_event(self, event_id: str) -> bool:
-        """Check if an event has been censored, i.e. if the content of the event has been erased
-        from the database due to a redaction.
-
-        Args:
-            event_id: The event ID that was redacted.
-
-        Returns:
-            True if the event has been censored, False otherwise.
-        """
-        censored_redactions_list = await self.db_pool.simple_select_onecol(
-            table="redactions",
-            keyvalues={"redacts": event_id},
-            retcol="have_censored",
-            desc="get_have_censored",
-        )
-        return any(censored_redactions_list)
-
     # Inform mypy that if allow_none is False (the default) then get_event
     # always returns an EventBase.
     @overload
     async def get_event(
         self,
         event_id: str,
-        redact_behaviour: EventRedactBehaviour = EventRedactBehaviour.redact,
+        redact_behaviour: EventRedactBehaviour = EventRedactBehaviour.REDACT,
         get_prev_content: bool = ...,
         allow_rejected: bool = ...,
         allow_none: Literal[False] = ...,
@@ -339,7 +322,7 @@ class EventsWorkerStore(SQLBaseStore):
     async def get_event(
         self,
         event_id: str,
-        redact_behaviour: EventRedactBehaviour = EventRedactBehaviour.redact,
+        redact_behaviour: EventRedactBehaviour = EventRedactBehaviour.REDACT,
         get_prev_content: bool = ...,
         allow_rejected: bool = ...,
         allow_none: Literal[True] = ...,
@@ -350,7 +333,7 @@ class EventsWorkerStore(SQLBaseStore):
     async def get_event(
         self,
         event_id: str,
-        redact_behaviour: EventRedactBehaviour = EventRedactBehaviour.redact,
+        redact_behaviour: EventRedactBehaviour = EventRedactBehaviour.REDACT,
         get_prev_content: bool = False,
         allow_rejected: bool = False,
         allow_none: bool = False,
@@ -362,9 +345,9 @@ class EventsWorkerStore(SQLBaseStore):
             event_id: The event_id of the event to fetch
 
             redact_behaviour: Determine what to do with a redacted event. Possible values:
-                * as_is - Return the full event body with no redacted content
-                * redact - Return the event but with a redacted body
-                * block - Do not return redacted events (behave as per allow_none
+                * AS_IS - Return the full event body with no redacted content
+                * REDACT - Return the event but with a redacted body
+                * DISALLOW - Do not return redacted events (behave as per allow_none
                     if the event is redacted)
 
             get_prev_content: If True and event is a state event,
@@ -406,7 +389,7 @@ class EventsWorkerStore(SQLBaseStore):
     async def get_events(
         self,
         event_ids: Collection[str],
-        redact_behaviour: EventRedactBehaviour = EventRedactBehaviour.redact,
+        redact_behaviour: EventRedactBehaviour = EventRedactBehaviour.REDACT,
         get_prev_content: bool = False,
         allow_rejected: bool = False,
     ) -> Dict[str, EventBase]:
@@ -417,9 +400,9 @@ class EventsWorkerStore(SQLBaseStore):
 
             redact_behaviour: Determine what to do with a redacted event. Possible
                 values:
-                * as_is - Return the full event body with no redacted content
-                * redact - Return the event but with a redacted body
-                * block - Do not return redacted events (omit them from the response)
+                * AS_IS - Return the full event body with no redacted content
+                * REDACT - Return the event but with a redacted body
+                * DISALLOW - Do not return redacted events (omit them from the response)
 
             get_prev_content: If True and event is a state event,
                 include the previous states content in the unsigned field.
@@ -442,7 +425,7 @@ class EventsWorkerStore(SQLBaseStore):
     async def get_events_as_list(
         self,
         event_ids: Collection[str],
-        redact_behaviour: EventRedactBehaviour = EventRedactBehaviour.redact,
+        redact_behaviour: EventRedactBehaviour = EventRedactBehaviour.REDACT,
         get_prev_content: bool = False,
         allow_rejected: bool = False,
     ) -> List[EventBase]:
@@ -455,9 +438,9 @@ class EventsWorkerStore(SQLBaseStore):
             event_ids: The event_ids of the events to fetch
 
             redact_behaviour: Determine what to do with a redacted event. Possible values:
-                * as_is - Return the full event body with no redacted content
-                * redact - Return the event but with a redacted body
-                * block - Do not return redacted events (omit them from the response)
+                * AS_IS - Return the full event body with no redacted content
+                * REDACT - Return the event but with a redacted body
+                * DISALLOW - Do not return redacted events (omit them from the response)
 
             get_prev_content: If True and event is a state event,
                 include the previous states content in the unsigned field.
@@ -568,10 +551,10 @@ class EventsWorkerStore(SQLBaseStore):
             event = entry.event
 
             if entry.redacted_event:
-                if redact_behaviour == EventRedactBehaviour.block:
+                if redact_behaviour == EventRedactBehaviour.BLOCK:
                     # Skip this event
                     continue
-                elif redact_behaviour == EventRedactBehaviour.redact:
+                elif redact_behaviour == EventRedactBehaviour.REDACT:
                     event = entry.redacted_event
 
             events.append(event)
@@ -640,57 +623,42 @@ class EventsWorkerStore(SQLBaseStore):
         missing_events_ids.difference_update(already_fetching_ids)
 
         if missing_events_ids:
+            log_ctx = current_context()
+            log_ctx.record_event_fetch(len(missing_events_ids))
 
-            async def get_missing_events_from_db() -> Dict[str, EventCacheEntry]:
-                """Fetches the events in `missing_event_ids` from the database.
+            # Add entries to `self._current_event_fetches` for each event we're
+            # going to pull from the DB. We use a single deferred that resolves
+            # to all the events we pulled from the DB (this will result in this
+            # function returning more events than requested, but that can happen
+            # already due to `_get_events_from_db`).
+            fetching_deferred: ObservableDeferred[
+                Dict[str, EventCacheEntry]
+            ] = ObservableDeferred(defer.Deferred(), consumeErrors=True)
+            for event_id in missing_events_ids:
+                self._current_event_fetches[event_id] = fetching_deferred
 
-                Also creates entries in `self._current_event_fetches` to allow
-                concurrent `_get_events_from_cache_or_db` calls to reuse the same fetch.
-                """
-                log_ctx = current_context()
-                log_ctx.record_event_fetch(len(missing_events_ids))
+            # Note that _get_events_from_db is also responsible for turning db rows
+            # into FrozenEvents (via _get_event_from_row), which involves seeing if
+            # the events have been redacted, and if so pulling the redaction event out
+            # of the database to check it.
+            #
+            try:
+                missing_events = await self._get_events_from_db(
+                    missing_events_ids,
+                )
 
-                # Add entries to `self._current_event_fetches` for each event we're
-                # going to pull from the DB. We use a single deferred that resolves
-                # to all the events we pulled from the DB (this will result in this
-                # function returning more events than requested, but that can happen
-                # already due to `_get_events_from_db`).
-                fetching_deferred: ObservableDeferred[
-                    Dict[str, EventCacheEntry]
-                ] = ObservableDeferred(defer.Deferred(), consumeErrors=True)
-                for event_id in missing_events_ids:
-                    self._current_event_fetches[event_id] = fetching_deferred
-
-                # Note that _get_events_from_db is also responsible for turning db rows
-                # into FrozenEvents (via _get_event_from_row), which involves seeing if
-                # the events have been redacted, and if so pulling the redaction event
-                # out of the database to check it.
-                #
-                try:
-                    missing_events = await self._get_events_from_db(
-                        missing_events_ids,
-                    )
-                except Exception as e:
-                    with PreserveLoggingContext():
-                        fetching_deferred.errback(e)
-                    raise e
-                finally:
-                    # Ensure that we mark these events as no longer being fetched.
-                    for event_id in missing_events_ids:
-                        self._current_event_fetches.pop(event_id, None)
-
+                event_entry_map.update(missing_events)
+            except Exception as e:
                 with PreserveLoggingContext():
-                    fetching_deferred.callback(missing_events)
+                    fetching_deferred.errback(e)
+                raise e
+            finally:
+                # Ensure that we mark these events as no longer being fetched.
+                for event_id in missing_events_ids:
+                    self._current_event_fetches.pop(event_id, None)
 
-                return missing_events
-
-            # We must allow the database fetch to complete in the presence of
-            # cancellations, since multiple `_get_events_from_cache_or_db` calls can
-            # reuse the same fetch.
-            missing_events: Dict[str, EventCacheEntry] = await delay_cancellation(
-                get_missing_events_from_db()
-            )
-            event_entry_map.update(missing_events)
+            with PreserveLoggingContext():
+                fetching_deferred.callback(missing_events)
 
         if already_fetching_deferreds:
             # Wait for the other event requests to finish and add their results
@@ -1094,18 +1062,6 @@ class EventsWorkerStore(SQLBaseStore):
             original_ev.internal_metadata.stream_ordering = row.stream_ordering
             original_ev.internal_metadata.outlier = row.outlier
 
-            # Consistency check: if the content of the event has been modified in the
-            # database, then the calculated event ID will not match the event id in the
-            # database.
-            if original_ev.event_id != event_id:
-                # it's difficult to see what to do here. Pretty much all bets are off
-                # if Synapse cannot rely on the consistency of its database.
-                raise RuntimeError(
-                    f"Database corruption: Event {event_id} in room {d['room_id']} "
-                    f"from the database appears to have been modified (calculated "
-                    f"event id {original_ev.event_id})"
-                )
-
             event_map[event_id] = original_ev
 
         # finally, we can decide whether each one needs redacting, and build
@@ -1374,9 +1330,10 @@ class EventsWorkerStore(SQLBaseStore):
         return results
 
     @cached(max_entries=100000, tree=True)
-    async def have_seen_event(self, room_id: str, event_id: str) -> bool:
-        res = await self._have_seen_events_dict(((room_id, event_id),))
-        return res[(room_id, event_id)]
+    async def have_seen_event(self, room_id: str, event_id: str) -> NoReturn:
+        # this only exists for the benefit of the @cachedList descriptor on
+        # _have_seen_events_dict
+        raise NotImplementedError()
 
     def _get_current_state_event_counts_txn(
         self, txn: LoggingTransaction, room_id: str
@@ -2001,15 +1958,7 @@ class EventsWorkerStore(SQLBaseStore):
     async def get_partial_state_events(
         self, event_ids: Collection[str]
     ) -> Dict[str, bool]:
-        """Checks which of the given events have partial state
-
-        Args:
-            event_ids: the events we want to check for partial state.
-
-        Returns:
-            a dict mapping from event id to partial-stateness. We return True for
-            any of the events which are unknown (or are outliers).
-        """
+        """Checks which of the given events have partial state"""
         result = await self.db_pool.simple_select_many_batch(
             table="partial_state_events",
             column="event_id",
@@ -2032,27 +1981,3 @@ class EventsWorkerStore(SQLBaseStore):
             desc="is_partial_state_event",
         )
         return result is not None
-
-    async def get_partial_state_events_batch(self, room_id: str) -> List[str]:
-        """Get a list of events in the given room that have partial state"""
-        return await self.db_pool.runInteraction(
-            "get_partial_state_events_batch",
-            self._get_partial_state_events_batch_txn,
-            room_id,
-        )
-
-    @staticmethod
-    def _get_partial_state_events_batch_txn(
-        txn: LoggingTransaction, room_id: str
-    ) -> List[str]:
-        txn.execute(
-            """
-            SELECT event_id FROM partial_state_events AS pse
-                JOIN events USING (event_id)
-            WHERE pse.room_id = ?
-            ORDER BY events.stream_ordering
-            LIMIT 100
-            """,
-            (room_id,),
-        )
-        return [row[0] for row in txn]

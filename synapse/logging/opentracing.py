@@ -289,9 +289,6 @@ class SynapseTags:
     # Uniqueish ID of a database transaction
     DB_TXN_ID = "db.txn_id"
 
-    # The name of the external cache
-    CACHE_NAME = "cache.name"
-
 
 class SynapseBaggage:
     FORCE_TRACING = "synapse-force-tracing"
@@ -884,7 +881,7 @@ def trace_servlet(request: "SynapseRequest", extract_context: bool = False):
         tags.SPAN_KIND: tags.SPAN_KIND_RPC_SERVER,
         tags.HTTP_METHOD: request.get_method(),
         tags.HTTP_URL: request.get_redacted_uri(),
-        tags.PEER_HOST_IPV6: request.getClientAddress().host,
+        tags.PEER_HOST_IPV6: request.getClientIP(),
     }
 
     request_name = request.request_metrics.name

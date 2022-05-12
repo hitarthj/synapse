@@ -56,7 +56,6 @@ from synapse.api.room_versions import (
 from synapse.events import EventBase, builder
 from synapse.federation.federation_base import FederationBase, event_from_pdu_json
 from synapse.federation.transport.client import SendJoinResponse
-from synapse.http.types import QueryParams
 from synapse.types import JsonDict, UserID, get_domain_from_id
 from synapse.util.async_helpers import concurrently_execute
 from synapse.util.caches.expiringcache import ExpiringCache
@@ -155,7 +154,7 @@ class FederationClient(FederationBase):
         self,
         destination: str,
         query_type: str,
-        args: QueryParams,
+        args: dict,
         retry_on_dns_fail: bool = False,
         ignore_backoff: bool = False,
     ) -> JsonDict:
@@ -1426,8 +1425,6 @@ class FederationClient(FederationBase):
             room = res.get("room")
             if not isinstance(room, dict):
                 raise InvalidResponseError("'room' must be a dict")
-            if room.get("room_id") != room_id:
-                raise InvalidResponseError("wrong room returned in hierarchy response")
 
             # Validate children_state of the room.
             children_state = room.pop("children_state", [])

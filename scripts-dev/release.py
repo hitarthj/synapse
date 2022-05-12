@@ -25,20 +25,19 @@ import sys
 import urllib.request
 from os import path
 from tempfile import TemporaryDirectory
-from typing import Any, List, Optional, cast
+from typing import List, Optional, Tuple
 
 import attr
 import click
 import commonmark
 import git
+import redbaron
 from click.exceptions import ClickException
 from github import Github
 from packaging import version
 
 
-def run_until_successful(
-    command: str, *args: Any, **kwargs: Any
-) -> subprocess.CompletedProcess:
+def run_until_successful(command, *args, **kwargs):
     while True:
         completed_process = subprocess.run(command, *args, **kwargs)
         exit_code = completed_process.returncode
@@ -52,7 +51,7 @@ def run_until_successful(
 
 
 @click.group()
-def cli() -> None:
+def cli():
     """An interactive script to walk through the parts of creating a release.
 
     Requires the dev dependencies be installed, which can be done via:
@@ -67,15 +66,10 @@ def cli() -> None:
 
         ./scripts-dev/release.py tag
 
-        # ... wait for assets to build ...
+        # ... wait for asssets to build ...
 
         ./scripts-dev/release.py publish
-
         ./scripts-dev/release.py upload
-
-        # Optional: generate some nice links for the announcement
-
-        ./scripts-dev/release.py announce
 
     If the env var GH_TOKEN (or GITHUB_TOKEN) is set, or passed into the
     `tag`/`publish` command, then a new draft release will be created/published.
@@ -83,19 +77,25 @@ def cli() -> None:
 
 
 @cli.command()
-def prepare() -> None:
+def prepare():
     """Do the initial stages of creating a release, including creating release
     branch, updating changelog and pushing to GitHub.
     """
 
     # Make sure we're in a git repo.
-    repo = get_repo_and_check_clean_checkout()
+    try:
+        repo = git.Repo()
+    except git.InvalidGitRepositoryError:
+        raise click.ClickException("Not in Synapse repo.")
+
+    if repo.is_dirty():
+        raise click.ClickException("Uncommitted changes exist.")
 
     click.secho("Updating git repo...")
     repo.remote().fetch()
 
     # Get the current version and AST from root Synapse module.
-    current_version = get_package_version()
+    current_version, parsed_synapse_ast, version_node = parse_version_from_module()
 
     # Figure out what sort of release we're doing and calcuate the new version.
     rc = click.confirm("RC", default=True)
@@ -157,21 +157,22 @@ def prepare() -> None:
         click.get_current_context().abort()
 
     # Switch to the release branch.
-    # Cast safety: parse() won't return a version.LegacyVersion from our
-    # version string format.
-    parsed_new_version = cast(version.Version, version.parse(new_version))
+    parsed_new_version = version.parse(new_version)
 
     # We assume for debian changelogs that we only do RCs or full releases.
     assert not parsed_new_version.is_devrelease
     assert not parsed_new_version.is_postrelease
 
-    release_branch_name = get_release_branch_name(parsed_new_version)
+    release_branch_name = (
+        f"release-v{parsed_new_version.major}.{parsed_new_version.minor}"
+    )
     release_branch = find_ref(repo, release_branch_name)
     if release_branch:
         if release_branch.is_remote():
             # If the release branch only exists on the remote we check it out
             # locally.
             repo.git.checkout(release_branch_name)
+            release_branch = repo.active_branch
     else:
         # If a branch doesn't exist we create one. We ask which one branch it
         # should be based off, defaulting to sensible values depending on the
@@ -193,25 +194,25 @@ def prepare() -> None:
             click.get_current_context().abort()
 
         # Check out the base branch and ensure it's up to date
-        repo.head.set_reference(base_branch, "check out the base branch")
+        repo.head.reference = base_branch
         repo.head.reset(index=True, working_tree=True)
         if not base_branch.is_remote():
             update_branch(repo)
 
         # Create the new release branch
-        # Type ignore will no longer be needed after GitPython 3.1.28.
-        # See https://github.com/gitpython-developers/GitPython/pull/1419
-        repo.create_head(release_branch_name, commit=base_branch)  # type: ignore[arg-type]
+        release_branch = repo.create_head(release_branch_name, commit=base_branch)
 
-    # Switch to the release branch and ensure it's up to date.
+    # Switch to the release branch and ensure its up to date.
     repo.git.checkout(release_branch_name)
     update_branch(repo)
 
-    # Update the version specified in pyproject.toml.
-    subprocess.check_output(["poetry", "version", new_version])
+    # Update the `__version__` variable and write it back to the file.
+    version_node.value = '"' + new_version + '"'
+    with open("synapse/__init__.py", "w") as f:
+        f.write(parsed_synapse_ast.dumps())
 
     # Generate changelogs.
-    generate_and_write_changelog(current_version, new_version)
+    generate_and_write_changelog(current_version)
 
     # Generate debian changelogs
     if parsed_new_version.pre is not None:
@@ -224,7 +225,7 @@ def prepare() -> None:
         debian_version = new_version
 
     run_until_successful(
-        f'dch -M -v {debian_version} "New Synapse release {new_version}."',
+        f'dch -M -v {debian_version} "New synapse release {debian_version}."',
         shell=True,
     )
     run_until_successful('dch -M -r -D stable ""', shell=True)
@@ -262,43 +263,35 @@ def prepare() -> None:
 
 @cli.command()
 @click.option("--gh-token", envvar=["GH_TOKEN", "GITHUB_TOKEN"])
-def tag(gh_token: Optional[str]) -> None:
+def tag(gh_token: Optional[str]):
     """Tags the release and generates a draft GitHub release"""
 
     # Make sure we're in a git repo.
-    repo = get_repo_and_check_clean_checkout()
+    try:
+        repo = git.Repo()
+    except git.InvalidGitRepositoryError:
+        raise click.ClickException("Not in Synapse repo.")
+
+    if repo.is_dirty():
+        raise click.ClickException("Uncommitted changes exist.")
 
     click.secho("Updating git repo...")
     repo.remote().fetch()
 
     # Find out the version and tag name.
-    current_version = get_package_version()
+    current_version, _, _ = parse_version_from_module()
     tag_name = f"v{current_version}"
 
     # Check we haven't released this version.
     if tag_name in repo.tags:
         raise click.ClickException(f"Tag {tag_name} already exists!\n")
 
-    # Check we're on the right release branch
-    release_branch = get_release_branch_name(current_version)
-    if repo.active_branch.name != release_branch:
-        click.echo(
-            f"Need to be on the release branch ({release_branch}) before tagging. "
-            f"Currently on ({repo.active_branch.name})."
-        )
-        click.get_current_context().abort()
-
     # Get the appropriate changelogs and tag.
     changes = get_changes_for_version(current_version)
 
     click.echo_via_pager(changes)
     if click.confirm("Edit text?", default=False):
-        edited_changes = click.edit(changes, require_save=False)
-        # This assert is for mypy's benefit. click's docs are a little unclear, but
-        # when `require_save=False`, not saving the temp file in the editor returns
-        # the original string.
-        assert edited_changes is not None
-        changes = edited_changes
+        changes = click.edit(changes, require_save=False)
 
     repo.create_tag(tag_name, message=changes, sign=True)
 
@@ -352,16 +345,22 @@ def tag(gh_token: Optional[str]) -> None:
 
 @cli.command()
 @click.option("--gh-token", envvar=["GH_TOKEN", "GITHUB_TOKEN"], required=True)
-def publish(gh_token: str) -> None:
-    """Publish release on GitHub."""
+def publish(gh_token: str):
+    """Publish release."""
 
     # Make sure we're in a git repo.
-    get_repo_and_check_clean_checkout()
+    try:
+        repo = git.Repo()
+    except git.InvalidGitRepositoryError:
+        raise click.ClickException("Not in Synapse repo.")
 
-    current_version = get_package_version()
+    if repo.is_dirty():
+        raise click.ClickException("Uncommitted changes exist.")
+
+    current_version, _, _ = parse_version_from_module()
     tag_name = f"v{current_version}"
 
-    if not click.confirm(f"Publish release {tag_name} on GitHub?", default=True):
+    if not click.confirm(f"Publish {tag_name}?", default=True):
         return
 
     # Publish the draft release
@@ -389,18 +388,11 @@ def publish(gh_token: str) -> None:
 
 
 @cli.command()
-def upload() -> None:
+def upload():
     """Upload release to pypi."""
 
-    current_version = get_package_version()
+    current_version, _, _ = parse_version_from_module()
     tag_name = f"v{current_version}"
-
-    # Check we have the right tag checked out.
-    repo = get_repo_and_check_clean_checkout()
-    tag = repo.tag(f"refs/tags/{tag_name}")
-    if repo.head.commit != tag.commit:
-        click.echo("Tag {tag_name} (tag.commit) is not currently checked out!")
-        click.get_current_context().abort()
 
     pypi_asset_names = [
         f"matrix_synapse-{current_version}-py3-none-any.whl",
@@ -423,78 +415,53 @@ def upload() -> None:
     )
 
 
-@cli.command()
-def announce() -> None:
-    """Generate markdown to announce the release."""
+def parse_version_from_module() -> Tuple[
+    version.Version, redbaron.RedBaron, redbaron.Node
+]:
+    # Parse the AST and load the `__version__` node so that we can edit it
+    # later.
+    with open("synapse/__init__.py") as f:
+        red = redbaron.RedBaron(f.read())
 
-    current_version = get_package_version()
-    tag_name = f"v{current_version}"
+    version_node = None
+    for node in red:
+        if node.type != "assignment":
+            continue
 
-    click.echo(
-        f"""
-Hi everyone. Synapse {current_version} has just been released.
+        if node.target.type != "name":
+            continue
 
-[notes](https://github.com/matrix-org/synapse/releases/tag/{tag_name}) | \
-[docker](https://hub.docker.com/r/matrixdotorg/synapse/tags?name={tag_name}) | \
-[debs](https://packages.matrix.org/debian/) | \
-[pypi](https://pypi.org/project/matrix-synapse/{current_version}/)"""
-    )
+        if node.target.value != "__version__":
+            continue
 
-    if "rc" in tag_name:
-        click.echo(
-            """
-Announce the RC in
-- #homeowners:matrix.org (Synapse Announcements)
-- #synapse-dev:matrix.org"""
-        )
-    else:
-        click.echo(
-            """
-Announce the release in
-- #homeowners:matrix.org (Synapse Announcements), bumping the version in the topic
-- #synapse:matrix.org (Synapse Admins), bumping the version in the topic
-- #synapse-dev:matrix.org
-- #synapse-package-maintainers:matrix.org"""
-        )
+        version_node = node
+        break
 
+    if not version_node:
+        print("Failed to find '__version__' definition in synapse/__init__.py")
+        sys.exit(1)
 
-def get_package_version() -> version.Version:
-    version_string = subprocess.check_output(["poetry", "version", "--short"]).decode(
-        "utf-8"
-    )
-    return version.Version(version_string)
+    # Parse the current version.
+    current_version = version.parse(version_node.value.value.strip('"'))
+    assert isinstance(current_version, version.Version)
 
-
-def get_release_branch_name(version_number: version.Version) -> str:
-    return f"release-v{version_number.major}.{version_number.minor}"
-
-
-def get_repo_and_check_clean_checkout() -> git.Repo:
-    """Get the project repo and check it's not got any uncommitted changes."""
-    try:
-        repo = git.Repo()
-    except git.InvalidGitRepositoryError:
-        raise click.ClickException("Not in Synapse repo.")
-    if repo.is_dirty():
-        raise click.ClickException("Uncommitted changes exist.")
-    return repo
+    return current_version, red, version_node
 
 
 def find_ref(repo: git.Repo, ref_name: str) -> Optional[git.HEAD]:
     """Find the branch/ref, looking first locally then in the remote."""
-    if ref_name in repo.references:
-        return repo.references[ref_name]
+    if ref_name in repo.refs:
+        return repo.refs[ref_name]
     elif ref_name in repo.remote().refs:
         return repo.remote().refs[ref_name]
     else:
         return None
 
 
-def update_branch(repo: git.Repo) -> None:
+def update_branch(repo: git.Repo):
     """Ensure branch is up to date if it has a remote"""
-    tracking_branch = repo.active_branch.tracking_branch()
-    if tracking_branch:
-        repo.git.merge(tracking_branch.name)
+    if repo.active_branch.tracking_branch():
+        repo.git.merge(repo.active_branch.tracking_branch().name)
 
 
 def get_changes_for_version(wanted_version: version.Version) -> str:
@@ -558,15 +525,11 @@ def get_changes_for_version(wanted_version: version.Version) -> str:
     return "\n".join(version_changelog)
 
 
-def generate_and_write_changelog(
-    current_version: version.Version, new_version: str
-) -> None:
+def generate_and_write_changelog(current_version: version.Version):
     # We do this by getting a draft so that we can edit it before writing to the
     # changelog.
     result = run_until_successful(
-        f"python3 -m towncrier build --draft --version {new_version}",
-        shell=True,
-        capture_output=True,
+        "python3 -m towncrier --draft", shell=True, capture_output=True
     )
     new_changes = result.stdout.decode("utf-8")
     new_changes = new_changes.replace(
@@ -582,8 +545,8 @@ def generate_and_write_changelog(
         f.write(existing_content)
 
     # Remove all the news fragments
-    for filename in glob.iglob("changelog.d/*.*"):
-        os.remove(filename)
+    for f in glob.iglob("changelog.d/*.*"):
+        os.remove(f)
 
 
 if __name__ == "__main__":

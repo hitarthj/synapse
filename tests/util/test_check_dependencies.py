@@ -12,7 +12,7 @@ from tests.unittest import TestCase
 
 
 class DummyDistribution(metadata.Distribution):
-    def __init__(self, version: object):
+    def __init__(self, version: str):
         self._version = version
 
     @property
@@ -30,7 +30,6 @@ old = DummyDistribution("0.1.2")
 old_release_candidate = DummyDistribution("0.1.2rc3")
 new = DummyDistribution("1.2.3")
 new_release_candidate = DummyDistribution("1.2.3rc4")
-distribution_with_no_version = DummyDistribution(None)
 
 # could probably use stdlib TestCase --- no need for twisted here
 
@@ -67,18 +66,6 @@ class TestDependencyChecker(TestCase):
             with self.mock_installed_package(new):
                 # should not raise
                 check_requirements()
-
-    def test_version_reported_as_none(self) -> None:
-        """Complain if importlib.metadata.version() returns None.
-
-        This shouldn't normally happen, but it was seen in the wild (#12223).
-        """
-        with patch(
-            "synapse.util.check_dependencies.metadata.requires",
-            return_value=["dummypkg >= 1"],
-        ):
-            with self.mock_installed_package(distribution_with_no_version):
-                self.assertRaises(DependencyException, check_requirements)
 
     def test_checks_ignore_dev_dependencies(self) -> None:
         """Bot generic and per-extra checks should ignore dev dependencies."""

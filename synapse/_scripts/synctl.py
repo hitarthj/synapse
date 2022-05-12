@@ -24,7 +24,7 @@ import signal
 import subprocess
 import sys
 import time
-from typing import Iterable, NoReturn, Optional, TextIO
+from typing import Iterable, Optional
 
 import yaml
 
@@ -45,7 +45,7 @@ one of the following:
 --------------------------------------------------------------------------------"""
 
 
-def pid_running(pid: int) -> bool:
+def pid_running(pid):
     try:
         os.kill(pid, 0)
     except OSError as err:
@@ -68,7 +68,7 @@ def pid_running(pid: int) -> bool:
     return True
 
 
-def write(message: str, colour: str = NORMAL, stream: TextIO = sys.stdout) -> None:
+def write(message, colour=NORMAL, stream=sys.stdout):
     # Lets check if we're writing to a TTY before colouring
     should_colour = False
     try:
@@ -84,7 +84,7 @@ def write(message: str, colour: str = NORMAL, stream: TextIO = sys.stdout) -> No
         stream.write(colour + message + NORMAL + "\n")
 
 
-def abort(message: str, colour: str = RED, stream: TextIO = sys.stderr) -> NoReturn:
+def abort(message, colour=RED, stream=sys.stderr):
     write(message, colour, stream)
     sys.exit(1)
 
@@ -166,7 +166,7 @@ Worker = collections.namedtuple(
 )
 
 
-def main() -> None:
+def main():
 
     parser = argparse.ArgumentParser()
 

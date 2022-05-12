@@ -124,7 +124,10 @@ class RootConfig:
     @classmethod
     def invoke_all_static(cls, func_name: str, *args: Any, **kwargs: Any) -> None: ...
     def parse_config_dict(
-        self, config_dict: Dict[str, Any], config_dir_path: str, data_dir_path: str
+        self,
+        config_dict: Dict[str, Any],
+        config_dir_path: Optional[str] = ...,
+        data_dir_path: Optional[str] = ...,
     ) -> None: ...
     def generate_config(
         self,

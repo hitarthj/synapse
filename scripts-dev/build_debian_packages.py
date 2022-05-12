@@ -17,8 +17,7 @@ import subprocess
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from types import FrameType
-from typing import Collection, Optional, Sequence, Set
+from typing import Optional, Sequence
 
 DISTS = (
     "debian:buster",  # oldstable: EOL 2022-08
@@ -27,7 +26,6 @@ DISTS = (
     "debian:sid",
     "ubuntu:focal",  # 20.04 LTS (our EOL forced by Py38 on 2024-10-14)
     "ubuntu:impish",  # 21.10  (EOL 2022-07)
-    "ubuntu:jammy",  # 22.04 LTS (EOL 2027-04)
 )
 
 DESC = """\
@@ -42,17 +40,15 @@ projdir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 
 class Builder(object):
     def __init__(
-        self,
-        redirect_stdout: bool = False,
-        docker_build_args: Optional[Sequence[str]] = None,
+        self, redirect_stdout=False, docker_build_args: Optional[Sequence[str]] = None
     ):
         self.redirect_stdout = redirect_stdout
         self._docker_build_args = tuple(docker_build_args or ())
-        self.active_containers: Set[str] = set()
+        self.active_containers = set()
         self._lock = threading.Lock()
         self._failed = False
 
-    def run_build(self, dist: str, skip_tests: bool = False) -> None:
+    def run_build(self, dist, skip_tests=False):
         """Build deb for a single distribution"""
 
         if self._failed:
@@ -66,7 +62,7 @@ class Builder(object):
             self._failed = True
             raise
 
-    def _inner_build(self, dist: str, skip_tests: bool = False) -> None:
+    def _inner_build(self, dist, skip_tests=False):
         tag = dist.split(":", 1)[1]
 
         # Make the dir where the debs will live.
@@ -141,7 +137,7 @@ class Builder(object):
             stdout.close()
             print("Completed build of %s" % (dist,))
 
-    def kill_containers(self) -> None:
+    def kill_containers(self):
         with self._lock:
             active = list(self.active_containers)
 
@@ -159,10 +155,8 @@ class Builder(object):
                 self.active_containers.remove(c)
 
 
-def run_builds(
-    builder: Builder, dists: Collection[str], jobs: int = 1, skip_tests: bool = False
-) -> None:
-    def sig(signum: int, _frame: Optional[FrameType]) -> None:
+def run_builds(builder, dists, jobs=1, skip_tests=False):
+    def sig(signum, _frame):
         print("Caught SIGINT")
         builder.kill_containers()
 

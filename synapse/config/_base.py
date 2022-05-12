@@ -702,7 +702,10 @@ class RootConfig:
         return obj
 
     def parse_config_dict(
-        self, config_dict: Dict[str, Any], config_dir_path: str, data_dir_path: str
+        self,
+        config_dict: Dict[str, Any],
+        config_dir_path: Optional[str] = None,
+        data_dir_path: Optional[str] = None,
     ) -> None:
         """Read the information from the config dict into this Config object.
 

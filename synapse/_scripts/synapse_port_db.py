@@ -21,29 +21,12 @@ import logging
 import sys
 import time
 import traceback
-from types import TracebackType
-from typing import (
-    Any,
-    Awaitable,
-    Callable,
-    Dict,
-    Generator,
-    Iterable,
-    List,
-    NoReturn,
-    Optional,
-    Set,
-    Tuple,
-    Type,
-    TypeVar,
-    cast,
-)
+from typing import Dict, Iterable, Optional, Set
 
 import yaml
 from matrix_common.versionstring import get_distribution_version_string
-from typing_extensions import TypedDict
 
-from twisted.internet import defer, reactor as reactor_
+from twisted.internet import defer, reactor
 
 from synapse.config.database import DatabaseConnectionConfig
 from synapse.config.homeserver import HomeServerConfig
@@ -52,7 +35,7 @@ from synapse.logging.context import (
     make_deferred_yieldable,
     run_in_background,
 )
-from synapse.storage.database import DatabasePool, LoggingTransaction, make_conn
+from synapse.storage.database import DatabasePool, make_conn
 from synapse.storage.databases.main import PushRuleStore
 from synapse.storage.databases.main.account_data import AccountDataWorkerStore
 from synapse.storage.databases.main.client_ips import ClientIpBackgroundUpdateStore
@@ -83,12 +66,8 @@ from synapse.storage.databases.main.user_directory import (
 from synapse.storage.databases.state.bg_updates import StateBackgroundUpdateStore
 from synapse.storage.engines import create_engine
 from synapse.storage.prepare_database import prepare_database
-from synapse.types import ISynapseReactor
 from synapse.util import Clock
 
-# Cast safety: Twisted does some naughty magic which replaces the
-# twisted.internet.reactor module with a Reactor instance at runtime.
-reactor = cast(ISynapseReactor, reactor_)
 logger = logging.getLogger("synapse_port_db")
 
 
@@ -118,7 +97,6 @@ BOOLEAN_COLUMNS = {
     "users": ["shadow_banned"],
     "e2e_fallback_keys_json": ["used"],
     "access_tokens": ["used"],
-    "device_lists_changes_in_room": ["converted_to_destinations"],
 }
 
 
@@ -180,16 +158,12 @@ IGNORED_TABLES = {
 
 # Error returned by the run function. Used at the top-level part of the script to
 # handle errors and return codes.
-end_error: Optional[str] = None
+end_error = None  # type: Optional[str]
 # The exec_info for the error, if any. If error is defined but not exec_info the script
 # will show only the error message without the stacktrace, if exec_info is defined but
 # not the error then the script will show nothing outside of what's printed in the run
 # function. If both are defined, the script will print both the error and the stacktrace.
-end_error_exec_info: Optional[
-    Tuple[Type[BaseException], BaseException, TracebackType]
-] = None
-
-R = TypeVar("R")
+end_error_exec_info = None
 
 
 class Store(
@@ -213,19 +187,17 @@ class Store(
     PresenceBackgroundUpdateStore,
     GroupServerWorkerStore,
 ):
-    def execute(self, f: Callable[..., R], *args: Any, **kwargs: Any) -> Awaitable[R]:
+    def execute(self, f, *args, **kwargs):
         return self.db_pool.runInteraction(f.__name__, f, *args, **kwargs)
 
-    def execute_sql(self, sql: str, *args: object) -> Awaitable[List[Tuple]]:
-        def r(txn: LoggingTransaction) -> List[Tuple]:
+    def execute_sql(self, sql, *args):
+        def r(txn):
             txn.execute(sql, args)
             return txn.fetchall()
 
         return self.db_pool.runInteraction("execute_sql", r)
 
-    def insert_many_txn(
-        self, txn: LoggingTransaction, table: str, headers: List[str], rows: List[Tuple]
-    ) -> None:
+    def insert_many_txn(self, txn, table, headers, rows):
         sql = "INSERT INTO %s (%s) VALUES (%s)" % (
             table,
             ", ".join(k for k in headers),
@@ -238,15 +210,14 @@ class Store(
             logger.exception("Failed to insert: %s", table)
             raise
 
-    # Note: the parent method is an `async def`.
-    def set_room_is_public(self, room_id: str, is_public: bool) -> NoReturn:
+    def set_room_is_public(self, room_id, is_public):
         raise Exception(
             "Attempt to set room_is_public during port_db: database not empty?"
         )
 
 
 class MockHomeserver:
-    def __init__(self, config: HomeServerConfig):
+    def __init__(self, config):
         self.clock = Clock(reactor)
         self.config = config
         self.hostname = config.server.server_name
@@ -254,30 +225,21 @@ class MockHomeserver:
             "matrix-synapse"
         )
 
-    def get_clock(self) -> Clock:
+    def get_clock(self):
         return self.clock
 
-    def get_reactor(self) -> ISynapseReactor:
+    def get_reactor(self):
         return reactor
 
-    def get_instance_name(self) -> str:
+    def get_instance_name(self):
         return "master"
 
 
-class Porter:
-    def __init__(
-        self,
-        sqlite_config: Dict[str, Any],
-        progress: "Progress",
-        batch_size: int,
-        hs_config: HomeServerConfig,
-    ):
-        self.sqlite_config = sqlite_config
-        self.progress = progress
-        self.batch_size = batch_size
-        self.hs_config = hs_config
+class Porter(object):
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
 
-    async def setup_table(self, table: str) -> Tuple[str, int, int, int, int]:
+    async def setup_table(self, table):
         if table in APPEND_ONLY_TABLES:
             # It's safe to just carry on inserting.
             row = await self.postgres_store.db_pool.simple_select_one(
@@ -319,7 +281,7 @@ class Porter:
                 )
         else:
 
-            def delete_all(txn: LoggingTransaction) -> None:
+            def delete_all(txn):
                 txn.execute(
                     "DELETE FROM port_from_sqlite3 WHERE table_name = %s", (table,)
                 )
@@ -344,7 +306,7 @@ class Porter:
     async def get_table_constraints(self) -> Dict[str, Set[str]]:
         """Returns a map of tables that have foreign key constraints to tables they depend on."""
 
-        def _get_constraints(txn: LoggingTransaction) -> Dict[str, Set[str]]:
+        def _get_constraints(txn):
             # We can pull the information about foreign key constraints out from
             # the postgres schema tables.
             sql = """
@@ -360,7 +322,7 @@ class Porter:
             """
             txn.execute(sql)
 
-            results: Dict[str, Set[str]] = {}
+            results = {}
             for table, foreign_table in txn:
                 results.setdefault(table, set()).add(foreign_table)
             return results
@@ -370,13 +332,8 @@ class Porter:
         )
 
     async def handle_table(
-        self,
-        table: str,
-        postgres_size: int,
-        table_size: int,
-        forward_chunk: int,
-        backward_chunk: int,
-    ) -> None:
+        self, table, postgres_size, table_size, forward_chunk, backward_chunk
+    ):
         logger.info(
             "Table %s: %i/%i (rows %i-%i) already ported",
             table,
@@ -423,9 +380,7 @@ class Porter:
 
         while True:
 
-            def r(
-                txn: LoggingTransaction,
-            ) -> Tuple[Optional[List[str]], List[Tuple], List[Tuple]]:
+            def r(txn):
                 forward_rows = []
                 backward_rows = []
                 if do_forward[0]:
@@ -452,7 +407,6 @@ class Porter:
             )
 
             if frows or brows:
-                assert headers is not None
                 if frows:
                     forward_chunk = max(row[0] for row in frows) + 1
                 if brows:
@@ -461,8 +415,7 @@ class Porter:
                 rows = frows + brows
                 rows = self._convert_rows(table, headers, rows)
 
-                def insert(txn: LoggingTransaction) -> None:
-                    assert headers is not None
+                def insert(txn):
                     self.postgres_store.insert_many_txn(txn, table, headers[1:], rows)
 
                     self.postgres_store.db_pool.simple_update_one_txn(
@@ -484,12 +437,8 @@ class Porter:
                 return
 
     async def handle_search_table(
-        self,
-        postgres_size: int,
-        table_size: int,
-        forward_chunk: int,
-        backward_chunk: int,
-    ) -> None:
+        self, postgres_size, table_size, forward_chunk, backward_chunk
+    ):
         select = (
             "SELECT es.rowid, es.*, e.origin_server_ts, e.stream_ordering"
             " FROM event_search as es"
@@ -500,7 +449,7 @@ class Porter:
 
         while True:
 
-            def r(txn: LoggingTransaction) -> Tuple[List[str], List[Tuple]]:
+            def r(txn):
                 txn.execute(select, (forward_chunk, self.batch_size))
                 rows = txn.fetchall()
                 headers = [column[0] for column in txn.description]
@@ -514,7 +463,7 @@ class Porter:
 
                 # We have to treat event_search differently since it has a
                 # different structure in the two different databases.
-                def insert(txn: LoggingTransaction) -> None:
+                def insert(txn):
                     sql = (
                         "INSERT INTO event_search (event_id, room_id, key,"
                         " sender, vector, origin_server_ts, stream_ordering)"
@@ -568,7 +517,7 @@ class Porter:
         self,
         db_config: DatabaseConnectionConfig,
         allow_outdated_version: bool = False,
-    ) -> Store:
+    ):
         """Builds and returns a database store using the provided configuration.
 
         Args:
@@ -590,13 +539,12 @@ class Porter:
                 db_conn, allow_outdated_version=allow_outdated_version
             )
             prepare_database(db_conn, engine, config=self.hs_config)
-            # Type safety: ignore that we're using Mock homeservers here.
-            store = Store(DatabasePool(hs, db_config, engine), db_conn, hs)  # type: ignore[arg-type]
+            store = Store(DatabasePool(hs, db_config, engine), db_conn, hs)
             db_conn.commit()
 
         return store
 
-    async def run_background_updates_on_postgres(self) -> None:
+    async def run_background_updates_on_postgres(self):
         # Manually apply all background updates on the PostgreSQL database.
         postgres_ready = (
             await self.postgres_store.db_pool.updates.has_completed_background_updates()
@@ -608,12 +556,12 @@ class Porter:
             self.progress.set_state("Running background updates on PostgreSQL")
 
         while not postgres_ready:
-            await self.postgres_store.db_pool.updates.do_next_background_update(True)
+            await self.postgres_store.db_pool.updates.do_next_background_update(100)
             postgres_ready = await (
                 self.postgres_store.db_pool.updates.has_completed_background_updates()
             )
 
-    async def run(self) -> None:
+    async def run(self):
         """Ports the SQLite database to a PostgreSQL database.
 
         When a fatal error is met, its message is assigned to the global "end_error"
@@ -649,7 +597,7 @@ class Porter:
 
             self.progress.set_state("Creating port tables")
 
-            def create_port_table(txn: LoggingTransaction) -> None:
+            def create_port_table(txn):
                 txn.execute(
                     "CREATE TABLE IF NOT EXISTS port_from_sqlite3 ("
                     " table_name varchar(100) NOT NULL UNIQUE,"
@@ -662,7 +610,7 @@ class Porter:
             # We want people to be able to rerun this script from an old port
             # so that they can pick up any missing events that were not
             # ported across.
-            def alter_table(txn: LoggingTransaction) -> None:
+            def alter_table(txn):
                 txn.execute(
                     "ALTER TABLE IF EXISTS port_from_sqlite3"
                     " RENAME rowid TO forward_rowid"
@@ -775,16 +723,12 @@ class Porter:
         except Exception as e:
             global end_error_exec_info
             end_error = str(e)
-            # Type safety: we're in an exception handler, so the exc_info() tuple
-            # will not be (None, None, None).
-            end_error_exec_info = sys.exc_info()  # type: ignore[assignment]
+            end_error_exec_info = sys.exc_info()
             logger.exception("")
         finally:
             reactor.stop()
 
-    def _convert_rows(
-        self, table: str, headers: List[str], rows: List[Tuple]
-    ) -> List[Tuple]:
+    def _convert_rows(self, table, headers, rows):
         bool_col_names = BOOLEAN_COLUMNS.get(table, [])
 
         bool_cols = [i for i, h in enumerate(headers) if h in bool_col_names]
@@ -792,7 +736,7 @@ class Porter:
         class BadValueException(Exception):
             pass
 
-        def conv(j: int, col: object) -> object:
+        def conv(j, col):
             if j in bool_cols:
                 return bool(col)
             if isinstance(col, bytes):
@@ -818,7 +762,7 @@ class Porter:
 
         return outrows
 
-    async def _setup_sent_transactions(self) -> Tuple[int, int, int]:
+    async def _setup_sent_transactions(self):
         # Only save things from the last day
         yesterday = int(time.time() * 1000) - 86400000
 
@@ -830,10 +774,10 @@ class Porter:
             ")"
         )
 
-        def r(txn: LoggingTransaction) -> Tuple[List[str], List[Tuple]]:
+        def r(txn):
             txn.execute(select)
             rows = txn.fetchall()
-            headers: List[str] = [column[0] for column in txn.description]
+            headers = [column[0] for column in txn.description]
 
             ts_ind = headers.index("ts")
 
@@ -847,7 +791,7 @@ class Porter:
         if inserted_rows:
             max_inserted_rowid = max(r[0] for r in rows)
 
-            def insert(txn: LoggingTransaction) -> None:
+            def insert(txn):
                 self.postgres_store.insert_many_txn(
                     txn, "sent_transactions", headers[1:], rows
                 )
@@ -856,7 +800,7 @@ class Porter:
         else:
             max_inserted_rowid = 0
 
-        def get_start_id(txn: LoggingTransaction) -> int:
+        def get_start_id(txn):
             txn.execute(
                 "SELECT rowid FROM sent_transactions WHERE ts >= ?"
                 " ORDER BY rowid ASC LIMIT 1",
@@ -881,13 +825,12 @@ class Porter:
             },
         )
 
-        def get_sent_table_size(txn: LoggingTransaction) -> int:
+        def get_sent_table_size(txn):
             txn.execute(
                 "SELECT count(*) FROM sent_transactions" " WHERE ts >= ?", (yesterday,)
             )
-            result = txn.fetchone()
-            assert result is not None
-            return int(result[0])
+            (size,) = txn.fetchone()
+            return int(size)
 
         remaining_count = await self.sqlite_store.execute(get_sent_table_size)
 
@@ -895,35 +838,25 @@ class Porter:
 
         return next_chunk, inserted_rows, total_count
 
-    async def _get_remaining_count_to_port(
-        self, table: str, forward_chunk: int, backward_chunk: int
-    ) -> int:
-        frows = cast(
-            List[Tuple[int]],
-            await self.sqlite_store.execute_sql(
-                "SELECT count(*) FROM %s WHERE rowid >= ?" % (table,), forward_chunk
-            ),
+    async def _get_remaining_count_to_port(self, table, forward_chunk, backward_chunk):
+        frows = await self.sqlite_store.execute_sql(
+            "SELECT count(*) FROM %s WHERE rowid >= ?" % (table,), forward_chunk
         )
 
-        brows = cast(
-            List[Tuple[int]],
-            await self.sqlite_store.execute_sql(
-                "SELECT count(*) FROM %s WHERE rowid <= ?" % (table,), backward_chunk
-            ),
+        brows = await self.sqlite_store.execute_sql(
+            "SELECT count(*) FROM %s WHERE rowid <= ?" % (table,), backward_chunk
         )
 
         return frows[0][0] + brows[0][0]
 
-    async def _get_already_ported_count(self, table: str) -> int:
+    async def _get_already_ported_count(self, table):
         rows = await self.postgres_store.execute_sql(
             "SELECT count(*) FROM %s" % (table,)
         )
 
         return rows[0][0]
 
-    async def _get_total_count_to_port(
-        self, table: str, forward_chunk: int, backward_chunk: int
-    ) -> Tuple[int, int]:
+    async def _get_total_count_to_port(self, table, forward_chunk, backward_chunk):
         remaining, done = await make_deferred_yieldable(
             defer.gatherResults(
                 [
@@ -944,17 +877,14 @@ class Porter:
         return done, remaining + done
 
     async def _setup_state_group_id_seq(self) -> None:
-        curr_id: Optional[
-            int
-        ] = await self.sqlite_store.db_pool.simple_select_one_onecol(
+        curr_id = await self.sqlite_store.db_pool.simple_select_one_onecol(
             table="state_groups", keyvalues={}, retcol="MAX(id)", allow_none=True
         )
 
         if not curr_id:
             return
 
-        def r(txn: LoggingTransaction) -> None:
-            assert curr_id is not None
+        def r(txn):
             next_id = curr_id + 1
             txn.execute("ALTER SEQUENCE state_group_id_seq RESTART WITH %s", (next_id,))
 
@@ -965,7 +895,7 @@ class Porter:
             "setup_user_id_seq", find_max_generated_user_id_localpart
         )
 
-        def r(txn: LoggingTransaction) -> None:
+        def r(txn):
             next_id = curr_id + 1
             txn.execute("ALTER SEQUENCE user_id_seq RESTART WITH %s", (next_id,))
 
@@ -987,7 +917,7 @@ class Porter:
             allow_none=True,
         )
 
-        def _setup_events_stream_seqs_set_pos(txn: LoggingTransaction) -> None:
+        def _setup_events_stream_seqs_set_pos(txn):
             if curr_forward_id:
                 txn.execute(
                     "ALTER SEQUENCE events_stream_seq RESTART WITH %s",
@@ -1011,20 +941,17 @@ class Porter:
         """Set a sequence to the correct value."""
         current_stream_ids = []
         for stream_id_table in stream_id_tables:
-            max_stream_id = cast(
-                int,
-                await self.sqlite_store.db_pool.simple_select_one_onecol(
-                    table=stream_id_table,
-                    keyvalues={},
-                    retcol="COALESCE(MAX(stream_id), 1)",
-                    allow_none=True,
-                ),
+            max_stream_id = await self.sqlite_store.db_pool.simple_select_one_onecol(
+                table=stream_id_table,
+                keyvalues={},
+                retcol="COALESCE(MAX(stream_id), 1)",
+                allow_none=True,
             )
             current_stream_ids.append(max_stream_id)
 
         next_id = max(current_stream_ids) + 1
 
-        def r(txn: LoggingTransaction) -> None:
+        def r(txn):
             sql = "ALTER SEQUENCE %s RESTART WITH" % (sequence_name,)
             txn.execute(sql + " %s", (next_id,))
 
@@ -1033,18 +960,14 @@ class Porter:
         )
 
     async def _setup_auth_chain_sequence(self) -> None:
-        curr_chain_id: Optional[
-            int
-        ] = await self.sqlite_store.db_pool.simple_select_one_onecol(
+        curr_chain_id = await self.sqlite_store.db_pool.simple_select_one_onecol(
             table="event_auth_chains",
             keyvalues={},
             retcol="MAX(chain_id)",
             allow_none=True,
         )
 
-        def r(txn: LoggingTransaction) -> None:
-            # Presumably there is at least one row in event_auth_chains.
-            assert curr_chain_id is not None
+        def r(txn):
             txn.execute(
                 "ALTER SEQUENCE event_auth_chain_id RESTART WITH %s",
                 (curr_chain_id + 1,),
@@ -1062,22 +985,15 @@ class Porter:
 ##############################################
 
 
-class TableProgress(TypedDict):
-    start: int
-    num_done: int
-    total: int
-    perc: int
-
-
-class Progress:
+class Progress(object):
     """Used to report progress of the port"""
 
-    def __init__(self) -> None:
-        self.tables: Dict[str, TableProgress] = {}
+    def __init__(self):
+        self.tables = {}
 
         self.start_time = int(time.time())
 
-    def add_table(self, table: str, cur: int, size: int) -> None:
+    def add_table(self, table, cur, size):
         self.tables[table] = {
             "start": cur,
             "num_done": cur,
@@ -1085,22 +1001,19 @@ class Progress:
             "perc": int(cur * 100 / size),
         }
 
-    def update(self, table: str, num_done: int) -> None:
+    def update(self, table, num_done):
         data = self.tables[table]
         data["num_done"] = num_done
         data["perc"] = int(num_done * 100 / data["total"])
 
-    def done(self) -> None:
-        pass
-
-    def set_state(self, state: str) -> None:
+    def done(self):
         pass
 
 
 class CursesProgress(Progress):
     """Reports progress to a curses window"""
 
-    def __init__(self, stdscr: "curses.window"):
+    def __init__(self, stdscr):
         self.stdscr = stdscr
 
         curses.use_default_colors()
@@ -1109,7 +1022,7 @@ class CursesProgress(Progress):
         curses.init_pair(1, curses.COLOR_RED, -1)
         curses.init_pair(2, curses.COLOR_GREEN, -1)
 
-        self.last_update = 0.0
+        self.last_update = 0
 
         self.finished = False
 
@@ -1118,7 +1031,7 @@ class CursesProgress(Progress):
 
         super(CursesProgress, self).__init__()
 
-    def update(self, table: str, num_done: int) -> None:
+    def update(self, table, num_done):
         super(CursesProgress, self).update(table, num_done)
 
         self.total_processed = 0
@@ -1129,7 +1042,7 @@ class CursesProgress(Progress):
 
         self.render()
 
-    def render(self, force: bool = False) -> None:
+    def render(self, force=False):
         now = time.time()
 
         if not force and now - self.last_update < 0.2:
@@ -1168,7 +1081,8 @@ class CursesProgress(Progress):
         left_margin = 5
         middle_space = 1
 
-        items = sorted(self.tables.items(), key=lambda i: (i[1]["perc"], i[0]))
+        items = self.tables.items()
+        items = sorted(items, key=lambda i: (i[1]["perc"], i[0]))
 
         for i, (table, data) in enumerate(items):
             if i + 2 >= rows:
@@ -1201,12 +1115,12 @@ class CursesProgress(Progress):
         self.stdscr.refresh()
         self.last_update = time.time()
 
-    def done(self) -> None:
+    def done(self):
         self.finished = True
         self.render(True)
         self.stdscr.getch()
 
-    def set_state(self, state: str) -> None:
+    def set_state(self, state):
         self.stdscr.clear()
         self.stdscr.addstr(0, 0, state + "...", curses.A_BOLD)
         self.stdscr.refresh()
@@ -1215,7 +1129,7 @@ class CursesProgress(Progress):
 class TerminalProgress(Progress):
     """Just prints progress to the terminal"""
 
-    def update(self, table: str, num_done: int) -> None:
+    def update(self, table, num_done):
         super(TerminalProgress, self).update(table, num_done)
 
         data = self.tables[table]
@@ -1224,7 +1138,7 @@ class TerminalProgress(Progress):
             "%s: %d%% (%d/%d)" % (table, data["perc"], data["num_done"], data["total"])
         )
 
-    def set_state(self, state: str) -> None:
+    def set_state(self, state):
         print(state + "...")
 
 
@@ -1232,7 +1146,7 @@ class TerminalProgress(Progress):
 ##############################################
 
 
-def main() -> None:
+def main():
     parser = argparse.ArgumentParser(
         description="A script to port an existing synapse SQLite database to"
         " a new PostgreSQL database."
@@ -1264,11 +1178,15 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=logging.DEBUG if args.v else logging.INFO,
-        format="%(asctime)s - %(name)s - %(lineno)d - %(levelname)s - %(message)s",
-        filename="port-synapse.log" if args.curses else None,
-    )
+    logging_config = {
+        "level": logging.DEBUG if args.v else logging.INFO,
+        "format": "%(asctime)s - %(name)s - %(lineno)d - %(levelname)s - %(message)s",
+    }
+
+    if args.curses:
+        logging_config["filename"] = "port-synapse.log"
+
+    logging.basicConfig(**logging_config)
 
     sqlite_config = {
         "name": "sqlite3",
@@ -1298,8 +1216,7 @@ def main() -> None:
     config = HomeServerConfig()
     config.parse_config_dict(hs_config, "", "")
 
-    def start(stdscr: Optional["curses.window"] = None) -> None:
-        progress: Progress
+    def start(stdscr=None):
         if stdscr:
             progress = CursesProgress(stdscr)
         else:
@@ -1313,7 +1230,7 @@ def main() -> None:
         )
 
         @defer.inlineCallbacks
-        def run() -> Generator["defer.Deferred[Any]", Any, None]:
+        def run():
             with LoggingContext("synapse_port_db_run"):
                 yield defer.ensureDeferred(porter.run())
 

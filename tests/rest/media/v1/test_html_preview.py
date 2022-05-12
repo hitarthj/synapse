@@ -16,6 +16,7 @@ from synapse.rest.media.v1.preview_html import (
     _get_html_media_encodings,
     decode_body,
     parse_html_to_open_graph,
+    rebase_url,
     summarize_paragraphs,
 )
 
@@ -160,7 +161,7 @@ class CalcOgTestCase(unittest.TestCase):
         """
 
         tree = decode_body(html, "http://example.com/test.html")
-        og = parse_html_to_open_graph(tree)
+        og = parse_html_to_open_graph(tree, "http://example.com/test.html")
 
         self.assertEqual(og, {"og:title": "Foo", "og:description": "Some text."})
 
@@ -176,7 +177,7 @@ class CalcOgTestCase(unittest.TestCase):
         """
 
         tree = decode_body(html, "http://example.com/test.html")
-        og = parse_html_to_open_graph(tree)
+        og = parse_html_to_open_graph(tree, "http://example.com/test.html")
 
         self.assertEqual(og, {"og:title": "Foo", "og:description": "Some text."})
 
@@ -195,7 +196,7 @@ class CalcOgTestCase(unittest.TestCase):
         """
 
         tree = decode_body(html, "http://example.com/test.html")
-        og = parse_html_to_open_graph(tree)
+        og = parse_html_to_open_graph(tree, "http://example.com/test.html")
 
         self.assertEqual(
             og,
@@ -217,7 +218,7 @@ class CalcOgTestCase(unittest.TestCase):
         """
 
         tree = decode_body(html, "http://example.com/test.html")
-        og = parse_html_to_open_graph(tree)
+        og = parse_html_to_open_graph(tree, "http://example.com/test.html")
 
         self.assertEqual(og, {"og:title": "Foo", "og:description": "Some text."})
 
@@ -231,7 +232,7 @@ class CalcOgTestCase(unittest.TestCase):
         """
 
         tree = decode_body(html, "http://example.com/test.html")
-        og = parse_html_to_open_graph(tree)
+        og = parse_html_to_open_graph(tree, "http://example.com/test.html")
 
         self.assertEqual(og, {"og:title": None, "og:description": "Some text."})
 
@@ -246,7 +247,7 @@ class CalcOgTestCase(unittest.TestCase):
         """
 
         tree = decode_body(html, "http://example.com/test.html")
-        og = parse_html_to_open_graph(tree)
+        og = parse_html_to_open_graph(tree, "http://example.com/test.html")
 
         self.assertEqual(og, {"og:title": "Title", "og:description": "Some text."})
 
@@ -261,7 +262,7 @@ class CalcOgTestCase(unittest.TestCase):
         """
 
         tree = decode_body(html, "http://example.com/test.html")
-        og = parse_html_to_open_graph(tree)
+        og = parse_html_to_open_graph(tree, "http://example.com/test.html")
 
         self.assertEqual(og, {"og:title": None, "og:description": "Some text."})
 
@@ -289,7 +290,7 @@ class CalcOgTestCase(unittest.TestCase):
         <head><title>Foo</title></head><body>Some text.</body></html>
         """.strip()
         tree = decode_body(html, "http://example.com/test.html")
-        og = parse_html_to_open_graph(tree)
+        og = parse_html_to_open_graph(tree, "http://example.com/test.html")
         self.assertEqual(og, {"og:title": "Foo", "og:description": "Some text."})
 
     def test_invalid_encoding(self) -> None:
@@ -303,7 +304,7 @@ class CalcOgTestCase(unittest.TestCase):
         </html>
         """
         tree = decode_body(html, "http://example.com/test.html", "invalid-encoding")
-        og = parse_html_to_open_graph(tree)
+        og = parse_html_to_open_graph(tree, "http://example.com/test.html")
         self.assertEqual(og, {"og:title": "Foo", "og:description": "Some text."})
 
     def test_invalid_encoding2(self) -> None:
@@ -318,7 +319,7 @@ class CalcOgTestCase(unittest.TestCase):
         </html>
         """
         tree = decode_body(html, "http://example.com/test.html")
-        og = parse_html_to_open_graph(tree)
+        og = parse_html_to_open_graph(tree, "http://example.com/test.html")
         self.assertEqual(og, {"og:title": "ÿÿ Foo", "og:description": "Some text."})
 
     def test_windows_1252(self) -> None:
@@ -332,7 +333,7 @@ class CalcOgTestCase(unittest.TestCase):
         </html>
         """
         tree = decode_body(html, "http://example.com/test.html")
-        og = parse_html_to_open_graph(tree)
+        og = parse_html_to_open_graph(tree, "http://example.com/test.html")
         self.assertEqual(og, {"og:title": "ó", "og:description": "Some text."})
 
 
@@ -447,3 +448,34 @@ class MediaEncodingTestCase(unittest.TestCase):
             'text/html; charset="invalid"',
         )
         self.assertEqual(list(encodings), ["utf-8", "cp1252"])
+
+
+class RebaseUrlTestCase(unittest.TestCase):
+    def test_relative(self) -> None:
+        """Relative URLs should be resolved based on the context of the base URL."""
+        self.assertEqual(
+            rebase_url("subpage", "https://example.com/foo/"),
+            "https://example.com/foo/subpage",
+        )
+        self.assertEqual(
+            rebase_url("sibling", "https://example.com/foo"),
+            "https://example.com/sibling",
+        )
+        self.assertEqual(
+            rebase_url("/bar", "https://example.com/foo/"),
+            "https://example.com/bar",
+        )
+
+    def test_absolute(self) -> None:
+        """Absolute URLs should not be modified."""
+        self.assertEqual(
+            rebase_url("https://alice.com/a/", "https://example.com/foo/"),
+            "https://alice.com/a/",
+        )
+
+    def test_data(self) -> None:
+        """Data URLs should not be modified."""
+        self.assertEqual(
+            rebase_url("data:,Hello%2C%20World%21", "https://example.com/foo/"),
+            "data:,Hello%2C%20World%21",
+        )

@@ -22,7 +22,7 @@ import logging
 import sys
 from typing import Callable, Optional
 
-import requests
+import requests as _requests
 import yaml
 
 
@@ -33,6 +33,7 @@ def request_registration(
     shared_secret: str,
     admin: bool = False,
     user_type: Optional[str] = None,
+    requests=_requests,
     _print: Callable[[str], None] = print,
     exit: Callable[[int], None] = sys.exit,
 ) -> None:

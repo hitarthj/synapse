@@ -14,13 +14,12 @@
 # limitations under the License.
 import collections.abc
 import logging
-from typing import TYPE_CHECKING, Collection, Dict, Iterable, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Iterable, Optional, Set
 
 from synapse.api.constants import EventTypes, Membership
 from synapse.api.errors import NotFoundError, UnsupportedRoomVersionError
 from synapse.api.room_versions import KNOWN_ROOM_VERSIONS, RoomVersion
 from synapse.events import EventBase
-from synapse.events.snapshot import EventContext
 from synapse.storage._base import SQLBaseStore
 from synapse.storage.database import (
     DatabasePool,
@@ -30,7 +29,7 @@ from synapse.storage.database import (
 from synapse.storage.databases.main.events_worker import EventsWorkerStore
 from synapse.storage.databases.main.roommember import RoomMemberWorkerStore
 from synapse.storage.state import StateFilter
-from synapse.types import JsonDict, JsonMapping, StateMap
+from synapse.types import StateMap
 from synapse.util.caches import intern_string
 from synapse.util.caches.descriptors import cached, cachedList
 
@@ -129,11 +128,11 @@ class StateGroupWorkerStore(EventsWorkerStore, SQLBaseStore):
         )
 
         if room_version is None:
-            raise NotFoundError("Could not find room_version for %s" % (room_id,))
+            raise NotFoundError("Could not room_version for %s" % (room_id,))
 
         return room_version
 
-    async def get_room_predecessor(self, room_id: str) -> Optional[JsonMapping]:
+    async def get_room_predecessor(self, room_id: str) -> Optional[dict]:
         """Get the predecessor of an upgraded room if it exists.
         Otherwise return None.
 
@@ -162,7 +161,6 @@ class StateGroupWorkerStore(EventsWorkerStore, SQLBaseStore):
         if not isinstance(predecessor, collections.abc.Mapping):
             return None
 
-        # The keys must be strings since the data is JSON.
         return predecessor
 
     async def get_create_event_for_room(self, room_id: str) -> EventBase:
@@ -204,7 +202,7 @@ class StateGroupWorkerStore(EventsWorkerStore, SQLBaseStore):
             The current state of the room.
         """
 
-        def _get_current_state_ids_txn(txn: LoggingTransaction) -> StateMap[str]:
+        def _get_current_state_ids_txn(txn):
             txn.execute(
                 """SELECT type, state_key, event_id FROM current_state_events
                 WHERE room_id = ?
@@ -243,9 +241,7 @@ class StateGroupWorkerStore(EventsWorkerStore, SQLBaseStore):
             # We delegate to the cached version
             return await self.get_current_state_ids(room_id)
 
-        def _get_filtered_current_state_ids_txn(
-            txn: LoggingTransaction,
-        ) -> StateMap[str]:
+        def _get_filtered_current_state_ids_txn(txn):
             results = {}
             sql = """
                 SELECT type, state_key, event_id FROM current_state_events
@@ -285,11 +281,11 @@ class StateGroupWorkerStore(EventsWorkerStore, SQLBaseStore):
 
         event_id = state.get((EventTypes.CanonicalAlias, ""))
         if not event_id:
-            return None
+            return
 
         event = await self.get_event(event_id, allow_none=True)
         if not event:
-            return None
+            return
 
         return event.content.get("canonical_alias")
 
@@ -308,14 +304,8 @@ class StateGroupWorkerStore(EventsWorkerStore, SQLBaseStore):
         list_name="event_ids",
         num_args=1,
     )
-    async def _get_state_group_for_events(
-        self, event_ids: Collection[str]
-    ) -> Dict[str, int]:
-        """Returns mapping event_id -> state_group.
-
-        Raises:
-             RuntimeError if the state is unknown at any of the given events
-        """
+    async def _get_state_group_for_events(self, event_ids):
+        """Returns mapping event_id -> state_group"""
         rows = await self.db_pool.simple_select_many_batch(
             table="event_to_state_groups",
             column="event_id",
@@ -325,11 +315,7 @@ class StateGroupWorkerStore(EventsWorkerStore, SQLBaseStore):
             desc="_get_state_group_for_events",
         )
 
-        res = {row["event_id"]: row["state_group"] for row in rows}
-        for e in event_ids:
-            if e not in res:
-                raise RuntimeError("No state group for unknown or outlier event %s" % e)
-        return res
+        return {row["event_id"]: row["state_group"] for row in rows}
 
     async def get_referenced_state_groups(
         self, state_groups: Iterable[int]
@@ -354,54 +340,6 @@ class StateGroupWorkerStore(EventsWorkerStore, SQLBaseStore):
 
         return {row["state_group"] for row in rows}
 
-    async def update_state_for_partial_state_event(
-        self,
-        event: EventBase,
-        context: EventContext,
-    ) -> None:
-        """Update the state group for a partial state event"""
-        await self.db_pool.runInteraction(
-            "update_state_for_partial_state_event",
-            self._update_state_for_partial_state_event_txn,
-            event,
-            context,
-        )
-
-    def _update_state_for_partial_state_event_txn(
-        self,
-        txn: LoggingTransaction,
-        event: EventBase,
-        context: EventContext,
-    ) -> None:
-        # we shouldn't have any outliers here
-        assert not event.internal_metadata.is_outlier()
-
-        # anything that was rejected should have the same state as its
-        # predecessor.
-        if context.rejected:
-            assert context.state_group == context.state_group_before_event
-
-        self.db_pool.simple_update_txn(
-            txn,
-            table="event_to_state_groups",
-            keyvalues={"event_id": event.event_id},
-            updatevalues={"state_group": context.state_group},
-        )
-
-        self.db_pool.simple_delete_one_txn(
-            txn,
-            table="partial_state_events",
-            keyvalues={"event_id": event.event_id},
-        )
-
-        # TODO(faster_joins): need to do something about workers here
-        txn.call_after(self.is_partial_state_event.invalidate, (event.event_id,))
-        txn.call_after(
-            self._get_state_group_for_event.prefill,
-            (event.event_id,),
-            context.state_group,
-        )
-
 
 class MainStateBackgroundUpdateStore(RoomMemberWorkerStore):
 
@@ -417,7 +355,7 @@ class MainStateBackgroundUpdateStore(RoomMemberWorkerStore):
     ):
         super().__init__(database, db_conn, hs)
 
-        self.server_name: str = hs.hostname
+        self.server_name = hs.hostname
 
         self.db_pool.updates.register_background_index_update(
             self.CURRENT_STATE_INDEX_UPDATE_NAME,
@@ -437,9 +375,7 @@ class MainStateBackgroundUpdateStore(RoomMemberWorkerStore):
             self._background_remove_left_rooms,
         )
 
-    async def _background_remove_left_rooms(
-        self, progress: JsonDict, batch_size: int
-    ) -> int:
+    async def _background_remove_left_rooms(self, progress, batch_size):
         """Background update to delete rows from `current_state_events` and
         `event_forward_extremities` tables of rooms that the server is no
         longer joined to.
@@ -447,9 +383,7 @@ class MainStateBackgroundUpdateStore(RoomMemberWorkerStore):
 
         last_room_id = progress.get("last_room_id", "")
 
-        def _background_remove_left_rooms_txn(
-            txn: LoggingTransaction,
-        ) -> Tuple[bool, Set[str]]:
+        def _background_remove_left_rooms_txn(txn):
             # get a batch of room ids to consider
             sql = """
                 SELECT DISTINCT room_id FROM current_state_events
@@ -581,7 +515,7 @@ class MainStateBackgroundUpdateStore(RoomMemberWorkerStore):
         )
 
         for user_id in potentially_left_users - joined_users:
-            await self.mark_remote_user_device_list_as_unsubscribed(user_id)  # type: ignore[attr-defined]
+            await self.mark_remote_user_device_list_as_unsubscribed(user_id)
 
         return batch_size
 

@@ -407,11 +407,6 @@ manhole_settings:
 # sign up in a short space of time never to return after their initial
 # session.
 #
-# The option `mau_appservice_trial_days` is similar to `mau_trial_days`, but
-# applies a different trial number if the user was registered by an appservice.
-# A value of 0 means no trial days are applied. Appservices not listed in this
-# dictionary use the value of `mau_trial_days` instead.
-#
 # 'mau_limit_alerting' is a means of limiting client side alerting
 # should the mau limit be reached. This is useful for small instances
 # where the admin has 5 mau seats (say) for 5 specific people and no
@@ -422,8 +417,6 @@ manhole_settings:
 #max_mau_value: 50
 #mau_trial_days: 2
 #mau_limit_alerting: false
-#mau_appservice_trial_days:
-#  "appservice-id": 1
 
 # If enabled, the metrics for the number of monthly active users will
 # be populated, however no one will be limited. If limit_usage_by_mau
@@ -545,15 +538,6 @@ templates:
   # information about using custom templates.
   #
   #custom_template_directory: /path/to/custom/templates/
-
-# List of rooms to exclude from sync responses. This is useful for server
-# administrators wishing to group users into a room without these users being able
-# to see it from their client.
-#
-# By default, no room is excluded.
-#
-#exclude_rooms_from_sync:
-#    - !foo:example.com
 
 
 # Message retention policy at the server level.
@@ -716,11 +700,11 @@ retention:
 #
 #allow_profile_lookup_over_federation: false
 
-# Uncomment to allow device display name lookup over federation. By default, the
-# Federation API prevents other homeservers from obtaining the display names of
-# user devices on this homeserver. Defaults to 'false'.
+# Uncomment to disable device display name lookup over federation. By default, the
+# Federation API allows other homeservers to obtain device display names of any user
+# on this homeserver. Defaults to 'true'.
 #
-#allow_device_name_lookup_over_federation: true
+#allow_device_name_lookup_over_federation: false
 
 
 ## Caching ##
@@ -798,12 +782,6 @@ caches:
 #
 # 'txn_limit' gives the maximum number of transactions to run per connection
 # before reconnecting. Defaults to 0, which means no limit.
-#
-# 'allow_unsafe_locale' is an option specific to Postgres. Under the default behavior, Synapse will refuse to
-# start if the postgres db is set to a non-C locale. You can override this behavior (which is *not* recommended)
-# by setting 'allow_unsafe_locale' to true. Note that doing so may corrupt your database. You can find more information
-# here: https://matrix-org.github.io/synapse/latest/postgres.html#fixing-incorrect-collate-or-ctype and here:
-# https://wiki.postgresql.org/wiki/Locale_data_changes
 #
 # 'args' gives options which are passed through to the database engine,
 # except for options starting 'cp_', which are used to configure the Twisted
@@ -1234,17 +1212,9 @@ oembed:
 # Registration can be rate-limited using the parameters in the "Ratelimiting"
 # section of this file.
 
-# Enable registration for new users. Defaults to 'false'. It is highly recommended that if you enable registration,
-# you use either captcha, email, or token-based verification to verify that new users are not bots. In order to enable registration
-# without any verification, you must also set `enable_registration_without_verification`, found below.
+# Enable registration for new users.
 #
 #enable_registration: false
-
-# Enable registration without email or captcha verification. Note: this option is *not* recommended,
-# as registration without verification is a known vector for spam and abuse. Defaults to false. Has no effect
-# unless `enable_registration` is also enabled.
-#
-#enable_registration_without_verification: true
 
 # Time that a user's session remains valid for, after they log in.
 #
@@ -1329,12 +1299,6 @@ oembed:
 # Defaults to false. Uncomment the following to require tokens:
 #
 #registration_requires_token: true
-
-# Allow users to submit a token during registration to bypass any required 3pid
-# steps configured in `registrations_require_3pid`.
-# Defaults to false, requiring that registration tokens (if enabled) complete a 3pid flow.
-#
-#enable_registration_token_3pid_bypass: false
 
 # If set, allows registration of standard or admin accounts by anyone who
 # has the shared secret, even if registration is otherwise disabled.

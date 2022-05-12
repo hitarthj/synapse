@@ -22,6 +22,7 @@ from typing import (
     Callable,
     Collection,
     Dict,
+    Iterable,
     List,
     Optional,
     Tuple,
@@ -188,7 +189,7 @@ class FederationServer(FederationBase):
     async def on_backfill_request(
         self, origin: str, room_id: str, versions: List[str], limit: int
     ) -> Tuple[int, Dict[str, Any]]:
-        async with self._server_linearizer.queue((origin, room_id)):
+        with (await self._server_linearizer.queue((origin, room_id))):
             origin_host, _ = parse_server_name(origin)
             await self.check_server_matches_acl(origin_host, room_id)
 
@@ -218,7 +219,7 @@ class FederationServer(FederationBase):
             Tuple indicating the response status code and dictionary response
             body including `event_id`.
         """
-        async with self._server_linearizer.queue((origin, room_id)):
+        with (await self._server_linearizer.queue((origin, room_id))):
             origin_host, _ = parse_server_name(origin)
             await self.check_server_matches_acl(origin_host, room_id)
 
@@ -268,8 +269,8 @@ class FederationServer(FederationBase):
             transaction_id=transaction_id,
             destination=destination,
             origin=origin,
-            origin_server_ts=transaction_data.get("origin_server_ts"),  # type: ignore[arg-type]
-            pdus=transaction_data.get("pdus"),
+            origin_server_ts=transaction_data.get("origin_server_ts"),  # type: ignore
+            pdus=transaction_data.get("pdus"),  # type: ignore
             edus=transaction_data.get("edus"),
         )
 
@@ -515,7 +516,7 @@ class FederationServer(FederationBase):
         )
 
     async def on_room_state_request(
-        self, origin: str, room_id: str, event_id: str
+        self, origin: str, room_id: str, event_id: Optional[str]
     ) -> Tuple[int, JsonDict]:
         origin_host, _ = parse_server_name(origin)
         await self.check_server_matches_acl(origin_host, room_id)
@@ -529,13 +530,18 @@ class FederationServer(FederationBase):
         # in the cache so we could return it without waiting for the linearizer
         # - but that's non-trivial to get right, and anyway somewhat defeats
         # the point of the linearizer.
-        async with self._server_linearizer.queue((origin, room_id)):
-            resp = await self._state_resp_cache.wrap(
-                (room_id, event_id),
-                self._on_context_state_request_compute,
-                room_id,
-                event_id,
+        with (await self._server_linearizer.queue((origin, room_id))):
+            resp: JsonDict = dict(
+                await self._state_resp_cache.wrap(
+                    (room_id, event_id),
+                    self._on_context_state_request_compute,
+                    room_id,
+                    event_id,
+                )
             )
+
+        room_version = await self.store.get_room_version_id(room_id)
+        resp["room_version"] = room_version
 
         return 200, resp
 
@@ -569,11 +575,14 @@ class FederationServer(FederationBase):
         return {"pdu_ids": state_ids, "auth_chain_ids": list(auth_chain_ids)}
 
     async def _on_context_state_request_compute(
-        self, room_id: str, event_id: str
+        self, room_id: str, event_id: Optional[str]
     ) -> Dict[str, list]:
-        pdus: Collection[EventBase]
-        event_ids = await self.handler.get_state_ids_for_pdu(room_id, event_id)
-        pdus = await self.store.get_events_as_list(event_ids)
+        if event_id:
+            pdus: Iterable[EventBase] = await self.handler.get_state_for_pdu(
+                room_id, event_id
+            )
+        else:
+            pdus = (await self.state.get_current_state(room_id)).values()
 
         auth_chain = await self.store.get_auth_chain(
             room_id, [pdu.event_id for pdu in pdus]
@@ -679,6 +688,8 @@ class FederationServer(FederationBase):
         time_now = self._clock.time_msec()
         event_json = event.get_pdu_json(time_now)
         resp = {
+            # TODO Remove the unstable prefix when servers have updated.
+            "org.matrix.msc3083.v2.event": event_json,
             "event": event_json,
             "state": [p.get_pdu_json(time_now) for p in state_events],
             "auth_chain": [p.get_pdu_json(time_now) for p in auth_chain_events],
@@ -873,7 +884,7 @@ class FederationServer(FederationBase):
     async def on_event_auth(
         self, origin: str, room_id: str, event_id: str
     ) -> Tuple[int, Dict[str, Any]]:
-        async with self._server_linearizer.queue((origin, room_id)):
+        with (await self._server_linearizer.queue((origin, room_id))):
             origin_host, _ = parse_server_name(origin)
             await self.check_server_matches_acl(origin_host, room_id)
 
@@ -935,7 +946,7 @@ class FederationServer(FederationBase):
         latest_events: List[str],
         limit: int,
     ) -> Dict[str, list]:
-        async with self._server_linearizer.queue((origin, room_id)):
+        with (await self._server_linearizer.queue((origin, room_id))):
             origin_host, _ = parse_server_name(origin)
             await self.check_server_matches_acl(origin_host, room_id)
 
@@ -1082,7 +1093,7 @@ class FederationServer(FederationBase):
         # has started processing).
         while True:
             async with lock:
-                logger.info("handling received PDU in room %s: %s", room_id, event)
+                logger.info("handling received PDU: %s", event)
                 try:
                     with nested_logging_context(event.event_id):
                         await self._federation_event_handler.on_receive_pdu(

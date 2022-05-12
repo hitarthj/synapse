@@ -13,12 +13,11 @@
 #  limitations under the License.
 
 import logging
-from typing import Any, List, Optional
+from typing import List, Optional
 
 import attr
 
 from synapse.config._base import Config, ConfigError
-from synapse.types import JsonDict
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +34,7 @@ class RetentionPurgeJob:
 class RetentionConfig(Config):
     section = "retention"
 
-    def read_config(self, config: JsonDict, **kwargs: Any) -> None:
+    def read_config(self, config, **kwargs):
         retention_config = config.get("retention")
         if retention_config is None:
             retention_config = {}
@@ -154,7 +153,7 @@ class RetentionConfig(Config):
                 RetentionPurgeJob(self.parse_duration("1d"), None, None)
             ]
 
-    def generate_config_section(self, **kwargs: Any) -> str:
+    def generate_config_section(self, config_dir_path, server_name, **kwargs):
         return """\
         # Message retention policy at the server level.
         #

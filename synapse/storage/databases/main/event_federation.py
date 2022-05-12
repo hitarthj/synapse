@@ -695,9 +695,7 @@ class EventFederationWorkerStore(SignatureWorkerStore, EventsWorkerStore, SQLBas
         # Return all events where not all sets can reach them.
         return {eid for eid, n in event_to_missing_sets.items() if n}
 
-    async def get_oldest_event_ids_with_depth_in_room(
-        self, room_id
-    ) -> List[Tuple[str, int]]:
+    async def get_oldest_event_ids_with_depth_in_room(self, room_id) -> Dict[str, int]:
         """Gets the oldest events(backwards extremities) in the room along with the
         aproximate depth.
 
@@ -710,7 +708,7 @@ class EventFederationWorkerStore(SignatureWorkerStore, EventsWorkerStore, SQLBas
             room_id: Room where we want to find the oldest events
 
         Returns:
-            List of (event_id, depth) tuples
+            Map from event_id to depth
         """
 
         def get_oldest_event_ids_with_depth_in_room_txn(txn, room_id):
@@ -743,7 +741,7 @@ class EventFederationWorkerStore(SignatureWorkerStore, EventsWorkerStore, SQLBas
 
             txn.execute(sql, (room_id, False))
 
-            return txn.fetchall()
+            return dict(txn)
 
         return await self.db_pool.runInteraction(
             "get_oldest_event_ids_with_depth_in_room",
@@ -753,7 +751,7 @@ class EventFederationWorkerStore(SignatureWorkerStore, EventsWorkerStore, SQLBas
 
     async def get_insertion_event_backward_extremities_in_room(
         self, room_id
-    ) -> List[Tuple[str, int]]:
+    ) -> Dict[str, int]:
         """Get the insertion events we know about that we haven't backfilled yet.
 
         We use this function so that we can compare and see if someones current
@@ -765,7 +763,7 @@ class EventFederationWorkerStore(SignatureWorkerStore, EventsWorkerStore, SQLBas
             room_id: Room where we want to find the oldest events
 
         Returns:
-            List of (event_id, depth) tuples
+            Map from event_id to depth
         """
 
         def get_insertion_event_backward_extremities_in_room_txn(txn, room_id):
@@ -780,7 +778,8 @@ class EventFederationWorkerStore(SignatureWorkerStore, EventsWorkerStore, SQLBas
             """
 
             txn.execute(sql, (room_id,))
-            return txn.fetchall()
+
+            return dict(txn)
 
         return await self.db_pool.runInteraction(
             "get_insertion_event_backward_extremities_in_room",
@@ -1074,15 +1073,9 @@ class EventFederationWorkerStore(SignatureWorkerStore, EventsWorkerStore, SQLBas
             /* Get the depth and stream_ordering of the prev_event_id from the events table */
             INNER JOIN events
             ON prev_event_id = events.event_id
-
-            /* exclude outliers from the results (we don't have the state, so cannot
-             * verify if the requesting server can see them).
-             */
-            WHERE NOT events.outlier
-
             /* Look for an edge which matches the given event_id */
-            AND event_edges.event_id = ? AND NOT event_edges.is_state
-
+            WHERE event_edges.event_id = ?
+            AND event_edges.is_state = ?
             /* Because we can have many events at the same depth,
             * we want to also tie-break and sort on stream_ordering */
             ORDER BY depth DESC, stream_ordering DESC
@@ -1091,7 +1084,7 @@ class EventFederationWorkerStore(SignatureWorkerStore, EventsWorkerStore, SQLBas
 
         txn.execute(
             connected_prev_event_query,
-            (event_id, limit),
+            (event_id, False, limit),
         )
         return [
             BackfillQueueNavigationItem(
@@ -1296,18 +1289,21 @@ class EventFederationWorkerStore(SignatureWorkerStore, EventsWorkerStore, SQLBas
         event_results.reverse()
         return event_results
 
-    async def get_successor_events(self, event_id: str) -> List[str]:
-        """Fetch all events that have the given event as a prev event
+    async def get_successor_events(self, event_ids: Iterable[str]) -> List[str]:
+        """Fetch all events that have the given events as a prev event
 
         Args:
-            event_id: The event to search for as a prev_event.
+            event_ids: The events to use as the previous events.
         """
-        return await self.db_pool.simple_select_onecol(
+        rows = await self.db_pool.simple_select_many_batch(
             table="event_edges",
-            keyvalues={"prev_event_id": event_id},
-            retcol="event_id",
+            column="prev_event_id",
+            iterable=event_ids,
+            retcols=("event_id",),
             desc="get_successor_events",
         )
+
+        return [row["event_id"] for row in rows]
 
     @wrap_as_background_process("delete_old_forward_extrem_cache")
     async def _delete_old_forward_extrem_cache(self) -> None:

@@ -29,7 +29,6 @@
 import os
 import subprocess
 import sys
-from typing import Any, Dict, List, Mapping, MutableMapping, NoReturn, Set
 
 import jinja2
 import yaml
@@ -37,7 +36,7 @@ import yaml
 MAIN_PROCESS_HTTP_LISTENER_PORT = 8080
 
 
-WORKERS_CONFIG: Dict[str, Dict[str, Any]] = {
+WORKERS_CONFIG = {
     "pusher": {
         "app": "synapse.app.pusher",
         "listener_resources": [],
@@ -171,7 +170,7 @@ WORKERS_CONFIG: Dict[str, Dict[str, Any]] = {
 # Templates for sections that may be inserted multiple times in config files
 SUPERVISORD_PROCESS_CONFIG_BLOCK = """
 [program:synapse_{name}]
-command=/usr/local/bin/prefix-log /usr/local/bin/python -m {app} \
+command=/usr/local/bin/python -m {app} \
     --config-path="{config_path}" \
     --config-path=/conf/workers/shared.yaml \
     --config-path=/conf/workers/{name}.yaml
@@ -201,7 +200,7 @@ upstream {upstream_worker_type} {{
 
 
 # Utility functions
-def log(txt: str) -> None:
+def log(txt: str):
     """Log something to the stdout.
 
     Args:
@@ -210,7 +209,7 @@ def log(txt: str) -> None:
     print(txt)
 
 
-def error(txt: str) -> NoReturn:
+def error(txt: str):
     """Log something and exit with an error code.
 
     Args:
@@ -220,7 +219,7 @@ def error(txt: str) -> NoReturn:
     sys.exit(2)
 
 
-def convert(src: str, dst: str, **template_vars: object) -> None:
+def convert(src: str, dst: str, **template_vars):
     """Generate a file from a template
 
     Args:
@@ -290,7 +289,7 @@ def add_sharding_to_shared_config(
         shared_config.setdefault("media_instance_running_background_jobs", worker_name)
 
 
-def generate_base_homeserver_config() -> None:
+def generate_base_homeserver_config():
     """Starts Synapse and generates a basic homeserver config, which will later be
     modified for worker support.
 
@@ -302,15 +301,13 @@ def generate_base_homeserver_config() -> None:
     subprocess.check_output(["/usr/local/bin/python", "/start.py", "migrate_config"])
 
 
-def generate_worker_files(
-    environ: Mapping[str, str], config_path: str, data_dir: str
-) -> None:
+def generate_worker_files(environ, config_path: str, data_dir: str):
     """Read the desired list of workers from environment variables and generate
     shared homeserver, nginx and supervisord configs.
 
     Args:
-        environ: os.environ instance.
-        config_path: The location of the generated Synapse main worker config file.
+        environ: _Environ[str]
+        config_path: Where to output the generated Synapse main worker config file.
         data_dir: The location of the synapse data directory. Where log and
             user-facing config files live.
     """
@@ -323,8 +320,7 @@ def generate_worker_files(
     # and adding a replication listener.
 
     # First read the original config file and extract the listeners block. Then we'll add
-    # another listener for replication. Later we'll write out the result to the shared
-    # config file.
+    # another listener for replication. Later we'll write out the result.
     listeners = [
         {
             "port": 9093,
@@ -343,7 +339,7 @@ def generate_worker_files(
     # base shared worker jinja2 template.
     #
     # This config file will be passed to all workers, included Synapse's main process.
-    shared_config: Dict[str, Any] = {"listeners": listeners}
+    shared_config = {"listeners": listeners}
 
     # The supervisord config. The contents of which will be inserted into the
     # base supervisord jinja2 template.
@@ -359,7 +355,7 @@ def generate_worker_files(
     #   worker_type: {1234, 1235, ...}}
     # }
     # and will be used to construct 'upstream' nginx directives.
-    nginx_upstreams: Dict[str, Set[int]] = {}
+    nginx_upstreams = {}
 
     # A map of: {"endpoint": "upstream"}, where "upstream" is a str representing what will be
     # placed after the proxy_pass directive. The main benefit to representing this data as a
@@ -371,13 +367,13 @@ def generate_worker_files(
     nginx_locations = {}
 
     # Read the desired worker configuration from the environment
-    worker_types_env = environ.get("SYNAPSE_WORKER_TYPES")
-    if worker_types_env is None:
+    worker_types = environ.get("SYNAPSE_WORKER_TYPES")
+    if worker_types is None:
         # No workers, just the main process
         worker_types = []
     else:
         # Split type names by comma
-        worker_types = worker_types_env.split(",")
+        worker_types = worker_types.split(",")
 
     # Create the worker configuration directory if it doesn't already exist
     os.makedirs("/conf/workers", exist_ok=True)
@@ -388,11 +384,7 @@ def generate_worker_files(
     # A counter of worker_type -> int. Used for determining the name for a given
     # worker type when generating its config file, as each worker's name is just
     # worker_type + instance #
-    worker_type_counter: Dict[str, int] = {}
-
-    # A list of internal endpoints to healthcheck, starting with the main process
-    # which exists even if no workers do.
-    healthcheck_urls = ["http://localhost:8080/health"]
+    worker_type_counter = {}
 
     # For each worker type specified by the user, create config values
     for worker_type in worker_types:
@@ -412,13 +404,11 @@ def generate_worker_files(
         # e.g. federation_reader1
         worker_name = worker_type + str(new_worker_count)
         worker_config.update(
-            {"name": worker_name, "port": str(worker_port), "config_path": config_path}
+            {"name": worker_name, "port": worker_port, "config_path": config_path}
         )
 
         # Update the shared config with any worker-type specific options
         shared_config.update(worker_config["shared_extra_conf"])
-
-        healthcheck_urls.append("http://localhost:%d/health" % (worker_port,))
 
         # Check if more than one instance of this worker type has been specified
         worker_type_total_count = worker_types.count(worker_type)
@@ -448,7 +438,21 @@ def generate_worker_files(
 
         # Write out the worker's logging config file
 
-        log_config_filepath = generate_worker_log_config(environ, worker_name, data_dir)
+        # Check whether we should write worker logs to disk, in addition to the console
+        extra_log_template_args = {}
+        if environ.get("SYNAPSE_WORKERS_WRITE_LOGS_TO_DISK"):
+            extra_log_template_args["LOG_FILE_PATH"] = "{dir}/logs/{name}.log".format(
+                dir=data_dir, name=worker_name
+            )
+
+        # Render and write the file
+        log_config_filepath = "/conf/workers/{name}.log.config".format(name=worker_name)
+        convert(
+            "/conf/log.config",
+            log_config_filepath,
+            worker_name=worker_name,
+            **extra_log_template_args,
+        )
 
         # Then a worker config file
         convert(
@@ -471,10 +475,15 @@ def generate_worker_files(
     # Determine the load-balancing upstreams to configure
     nginx_upstream_config = ""
 
+    # At the same time, prepare a list of internal endpoints to healthcheck
+    # starting with the main process which exists even if no workers do.
+    healthcheck_urls = ["http://localhost:8080/health"]
+
     for upstream_worker_type, upstream_worker_ports in nginx_upstreams.items():
         body = ""
         for port in upstream_worker_ports:
             body += "    server localhost:%d;\n" % (port,)
+            healthcheck_urls.append("http://localhost:%d/health" % (port,))
 
         # Add to the list of configured upstreams
         nginx_upstream_config += NGINX_UPSTREAM_CONFIG_BLOCK.format(
@@ -483,10 +492,6 @@ def generate_worker_files(
         )
 
     # Finally, we'll write out the config files.
-
-    # log config for the master process
-    master_log_config = generate_worker_log_config(environ, "master", data_dir)
-    shared_config["log_config"] = master_log_config
 
     # Shared homeserver config
     convert(
@@ -504,10 +509,9 @@ def generate_worker_files(
     )
 
     # Supervisord config
-    os.makedirs("/etc/supervisor", exist_ok=True)
     convert(
         "/conf/supervisord.conf.j2",
-        "/etc/supervisor/supervisord.conf",
+        "/etc/supervisor/conf.d/supervisord.conf",
         main_config_path=config_path,
         worker_config=supervisord_config,
     )
@@ -525,31 +529,15 @@ def generate_worker_files(
         os.mkdir(log_dir)
 
 
-def generate_worker_log_config(
-    environ: Mapping[str, str], worker_name: str, data_dir: str
-) -> str:
-    """Generate a log.config file for the given worker.
+def start_supervisord():
+    """Starts up supervisord which then starts and monitors all other necessary processes
 
-    Returns: the path to the generated file
+    Raises: CalledProcessError if calling start.py return a non-zero exit code.
     """
-    # Check whether we should write worker logs to disk, in addition to the console
-    extra_log_template_args = {}
-    if environ.get("SYNAPSE_WORKERS_WRITE_LOGS_TO_DISK"):
-        extra_log_template_args["LOG_FILE_PATH"] = "{dir}/logs/{name}.log".format(
-            dir=data_dir, name=worker_name
-        )
-    # Render and write the file
-    log_config_filepath = "/conf/workers/{name}.log.config".format(name=worker_name)
-    convert(
-        "/conf/log.config",
-        log_config_filepath,
-        worker_name=worker_name,
-        **extra_log_template_args,
-    )
-    return log_config_filepath
+    subprocess.run(["/usr/bin/supervisord"], stdin=subprocess.PIPE)
 
 
-def main(args: List[str], environ: MutableMapping[str, str]) -> None:
+def main(args, environ):
     config_dir = environ.get("SYNAPSE_CONFIG_DIR", "/data")
     config_path = environ.get("SYNAPSE_CONFIG_PATH", config_dir + "/homeserver.yaml")
     data_dir = environ.get("SYNAPSE_DATA_DIR", "/data")
@@ -576,13 +564,7 @@ def main(args: List[str], environ: MutableMapping[str, str]) -> None:
 
     # Start supervisord, which will start Synapse, all of the configured worker
     # processes, redis, nginx etc. according to the config we created above.
-    log("Starting supervisord")
-    os.execl(
-        "/usr/local/bin/supervisord",
-        "supervisord",
-        "-c",
-        "/etc/supervisor/supervisord.conf",
-    )
+    start_supervisord()
 
 
 if __name__ == "__main__":

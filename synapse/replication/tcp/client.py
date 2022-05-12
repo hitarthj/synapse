@@ -21,7 +21,7 @@ from twisted.internet.interfaces import IAddress, IConnector
 from twisted.internet.protocol import ReconnectingClientFactory
 from twisted.python.failure import Failure
 
-from synapse.api.constants import EventTypes, ReceiptTypes
+from synapse.api.constants import EventTypes
 from synapse.federation import send_queue
 from synapse.federation.sender import FederationSender
 from synapse.logging.context import PreserveLoggingContext, make_deferred_yieldable
@@ -401,8 +401,10 @@ class FederationSenderHandler:
             # we only want to send on receipts for our own users
             if not self._is_mine_id(receipt.user_id):
                 continue
-            # Private read receipts never get sent over federation.
-            if receipt.receipt_type == ReceiptTypes.READ_PRIVATE:
+            if (
+                receipt.data.get("hidden", False)
+                and self._hs.config.experimental.msc2285_enabled
+            ):
                 continue
             receipt_info = ReadReceipt(
                 receipt.room_id,
@@ -449,7 +451,7 @@ class FederationSenderHandler:
             # service for robustness? Or could we replace it with an assertion that
             # we're not being re-entered?
 
-            async with self._fed_position_linearizer.queue(None):
+            with (await self._fed_position_linearizer.queue(None)):
                 # We persist and ack the same position, so we take a copy of it
                 # here as otherwise it can get modified from underneath us.
                 current_position = self.federation_position

@@ -16,7 +16,6 @@
 from typing import Any, List
 
 from synapse.config.sso import SsoAttributeRequirement
-from synapse.types import JsonDict
 
 from ._base import Config
 from ._util import validate_config
@@ -30,7 +29,7 @@ class CasConfig(Config):
 
     section = "cas"
 
-    def read_config(self, config: JsonDict, **kwargs: Any) -> None:
+    def read_config(self, config, **kwargs) -> None:
         cas_config = config.get("cas_config", None)
         self.cas_enabled = cas_config and cas_config.get("enabled", True)
 
@@ -53,7 +52,7 @@ class CasConfig(Config):
             self.cas_displayname_attribute = None
             self.cas_required_attributes = []
 
-    def generate_config_section(self, **kwargs: Any) -> str:
+    def generate_config_section(self, config_dir_path, server_name, **kwargs) -> str:
         return """\
         # Enable Central Authentication Service (CAS) for registration and login.
         #

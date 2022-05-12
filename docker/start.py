@@ -6,28 +6,27 @@ import os
 import platform
 import subprocess
 import sys
-from typing import Any, Dict, List, Mapping, MutableMapping, NoReturn, Optional
 
 import jinja2
 
 
 # Utility functions
-def log(txt: str) -> None:
+def log(txt):
     print(txt, file=sys.stderr)
 
 
-def error(txt: str) -> NoReturn:
+def error(txt):
     log(txt)
     sys.exit(2)
 
 
-def convert(src: str, dst: str, environ: Mapping[str, object]) -> None:
+def convert(src, dst, environ):
     """Generate a file from a template
 
     Args:
-        src: path to input file
-        dst: path to file to write
-        environ: environment dictionary, for replacement mappings.
+        src (str): path to input file
+        dst (str): path to file to write
+        environ (dict): environment dictionary, for replacement mappings.
     """
     with open(src) as infile:
         template = infile.read()
@@ -36,30 +35,25 @@ def convert(src: str, dst: str, environ: Mapping[str, object]) -> None:
         outfile.write(rendered)
 
 
-def generate_config_from_template(
-    config_dir: str,
-    config_path: str,
-    os_environ: Mapping[str, str],
-    ownership: Optional[str],
-) -> None:
+def generate_config_from_template(config_dir, config_path, environ, ownership):
     """Generate a homeserver.yaml from environment variables
 
     Args:
-        config_dir: where to put generated config files
-        config_path: where to put the main config file
-        os_environ: environment mapping
-        ownership: "<user>:<group>" string which will be used to set
+        config_dir (str): where to put generated config files
+        config_path (str): where to put the main config file
+        environ (dict): environment dictionary
+        ownership (str|None): "<user>:<group>" string which will be used to set
             ownership of the generated configs. If None, ownership will not change.
     """
     for v in ("SYNAPSE_SERVER_NAME", "SYNAPSE_REPORT_STATS"):
-        if v not in os_environ:
+        if v not in environ:
             error(
                 "Environment variable '%s' is mandatory when generating a config file."
                 % (v,)
             )
 
     # populate some params from data files (if they exist, else create new ones)
-    environ: Dict[str, Any] = dict(os_environ)
+    environ = environ.copy()
     secrets = {
         "registration": "SYNAPSE_REGISTRATION_SHARED_SECRET",
         "macaroon": "SYNAPSE_MACAROON_SECRET_KEY",
@@ -114,7 +108,7 @@ def generate_config_from_template(
 
     # Hopefully we already have a signing key, but generate one if not.
     args = [
-        sys.executable,
+        "python",
         "-m",
         "synapse.app.homeserver",
         "--config-path",
@@ -133,12 +127,12 @@ def generate_config_from_template(
     subprocess.check_output(args)
 
 
-def run_generate_config(environ: Mapping[str, str], ownership: Optional[str]) -> None:
+def run_generate_config(environ, ownership):
     """Run synapse with a --generate-config param to generate a template config file
 
     Args:
-        environ: env vars from `os.enrivon`.
-        ownership: "userid:groupid" arg for chmod. If None, ownership will not change.
+        environ (dict): env var dict
+        ownership (str|None): "userid:groupid" arg for chmod. If None, ownership will not change.
 
     Never returns.
     """
@@ -164,7 +158,7 @@ def run_generate_config(environ: Mapping[str, str], ownership: Optional[str]) ->
 
     # generate the main config file, and a signing key.
     args = [
-        sys.executable,
+        "python",
         "-m",
         "synapse.app.homeserver",
         "--server-name",
@@ -181,10 +175,10 @@ def run_generate_config(environ: Mapping[str, str], ownership: Optional[str]) ->
         "--open-private-ports",
     ]
     # log("running %s" % (args, ))
-    os.execv(sys.executable, args)
+    os.execv("/usr/local/bin/python", args)
 
 
-def main(args: List[str], environ: MutableMapping[str, str]) -> None:
+def main(args, environ):
     mode = args[1] if len(args) > 1 else "run"
 
     # if we were given an explicit user to switch to, do so
@@ -260,12 +254,12 @@ running with 'migrate_config'. See the README for more details.
 
     log("Starting synapse with args " + " ".join(args))
 
-    args = [sys.executable] + args
+    args = ["python"] + args
     if ownership is not None:
         args = ["gosu", ownership] + args
         os.execve("/usr/sbin/gosu", args, environ)
     else:
-        os.execve(sys.executable, args, environ)
+        os.execve("/usr/local/bin/python", args, environ)
 
 
 if __name__ == "__main__":

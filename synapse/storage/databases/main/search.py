@@ -14,7 +14,7 @@
 
 import logging
 import re
-from typing import TYPE_CHECKING, Any, Collection, Iterable, List, Optional, Set
+from typing import TYPE_CHECKING, Collection, Iterable, List, Optional, Set
 
 import attr
 
@@ -74,7 +74,7 @@ class SearchWorkerStore(SQLBaseStore):
                 " VALUES (?,?,?,to_tsvector('english', ?),?,?)"
             )
 
-            args1 = (
+            args = (
                 (
                     entry.event_id,
                     entry.room_id,
@@ -86,14 +86,14 @@ class SearchWorkerStore(SQLBaseStore):
                 for entry in entries
             )
 
-            txn.execute_batch(sql, args1)
+            txn.execute_batch(sql, args)
 
         elif isinstance(self.database_engine, Sqlite3Engine):
             sql = (
                 "INSERT INTO event_search (event_id, room_id, key, value)"
                 " VALUES (?,?,?,?)"
             )
-            args2 = (
+            args = (
                 (
                     entry.event_id,
                     entry.room_id,
@@ -102,7 +102,7 @@ class SearchWorkerStore(SQLBaseStore):
                 )
                 for entry in entries
             )
-            txn.execute_batch(sql, args2)
+            txn.execute_batch(sql, args)
 
         else:
             # This should be unreachable.
@@ -427,7 +427,7 @@ class SearchStore(SearchBackgroundUpdateStore):
 
         search_query = _parse_query(self.database_engine, search_term)
 
-        args: List[Any] = []
+        args = []
 
         # Make sure we don't explode because the person is in too many rooms.
         # We filter the results below regardless.
@@ -494,11 +494,11 @@ class SearchStore(SearchBackgroundUpdateStore):
 
         results = list(filter(lambda row: row["room_id"] in room_ids, results))
 
-        # We set redact_behaviour to block here to prevent redacted events being returned in
+        # We set redact_behaviour to BLOCK here to prevent redacted events being returned in
         # search results (which is a data leak)
-        events = await self.get_events_as_list(  # type: ignore[attr-defined]
+        events = await self.get_events_as_list(
             [r["event_id"] for r in results],
-            redact_behaviour=EventRedactBehaviour.block,
+            redact_behaviour=EventRedactBehaviour.BLOCK,
         )
 
         event_map = {ev.event_id: ev for ev in events}
@@ -530,7 +530,7 @@ class SearchStore(SearchBackgroundUpdateStore):
         room_ids: Collection[str],
         search_term: str,
         keys: Iterable[str],
-        limit: int,
+        limit,
         pagination_token: Optional[str] = None,
     ) -> JsonDict:
         """Performs a full text search over events with given keys.
@@ -549,7 +549,7 @@ class SearchStore(SearchBackgroundUpdateStore):
 
         search_query = _parse_query(self.database_engine, search_term)
 
-        args: List[Any] = []
+        args = []
 
         # Make sure we don't explode because the person is in too many rooms.
         # We filter the results below regardless.
@@ -573,9 +573,9 @@ class SearchStore(SearchBackgroundUpdateStore):
 
         if pagination_token:
             try:
-                origin_server_ts_str, stream_str = pagination_token.split(",")
-                origin_server_ts = int(origin_server_ts_str)
-                stream = int(stream_str)
+                origin_server_ts, stream = pagination_token.split(",")
+                origin_server_ts = int(origin_server_ts)
+                stream = int(stream)
             except Exception:
                 raise SynapseError(400, "Invalid pagination token")
 
@@ -652,11 +652,11 @@ class SearchStore(SearchBackgroundUpdateStore):
 
         results = list(filter(lambda row: row["room_id"] in room_ids, results))
 
-        # We set redact_behaviour to block here to prevent redacted events being returned in
+        # We set redact_behaviour to BLOCK here to prevent redacted events being returned in
         # search results (which is a data leak)
-        events = await self.get_events_as_list(  # type: ignore[attr-defined]
+        events = await self.get_events_as_list(
             [r["event_id"] for r in results],
-            redact_behaviour=EventRedactBehaviour.block,
+            redact_behaviour=EventRedactBehaviour.BLOCK,
         )
 
         event_map = {ev.event_id: ev for ev in events}

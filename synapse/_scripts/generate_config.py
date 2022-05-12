@@ -7,7 +7,7 @@ import sys
 from synapse.config.homeserver import HomeServerConfig
 
 
-def main() -> None:
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--config-dir",

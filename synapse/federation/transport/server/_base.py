@@ -16,8 +16,7 @@ import functools
 import logging
 import re
 import time
-from http import HTTPStatus
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional, Tuple, cast
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Tuple, cast
 
 from synapse.api.errors import Codes, FederationDeniedError, SynapseError
 from synapse.api.urls import FEDERATION_V1_PREFIX
@@ -87,24 +86,15 @@ class Authenticator:
 
         if not auth_headers:
             raise NoAuthenticationError(
-                HTTPStatus.UNAUTHORIZED,
-                "Missing Authorization headers",
-                Codes.UNAUTHORIZED,
+                401, "Missing Authorization headers", Codes.UNAUTHORIZED
             )
 
         for auth in auth_headers:
             if auth.startswith(b"X-Matrix"):
-                (origin, key, sig, destination) = _parse_auth_header(auth)
+                (origin, key, sig) = _parse_auth_header(auth)
                 json_request["origin"] = origin
                 json_request["signatures"].setdefault(origin, {})[key] = sig
 
-                # if the origin_server sent a destination along it needs to match our own server_name
-                if destination is not None and destination != self.server_name:
-                    raise AuthenticationError(
-                        HTTPStatus.UNAUTHORIZED,
-                        "Destination mismatch in auth header",
-                        Codes.UNAUTHORIZED,
-                    )
         if (
             self.federation_domain_whitelist is not None
             and origin not in self.federation_domain_whitelist
@@ -113,9 +103,7 @@ class Authenticator:
 
         if origin is None or not json_request["signatures"]:
             raise NoAuthenticationError(
-                HTTPStatus.UNAUTHORIZED,
-                "Missing Authorization headers",
-                Codes.UNAUTHORIZED,
+                401, "Missing Authorization headers", Codes.UNAUTHORIZED
             )
 
         await self.keyring.verify_json_for_server(
@@ -154,14 +142,13 @@ class Authenticator:
             logger.exception("Error resetting retry timings on %s", origin)
 
 
-def _parse_auth_header(header_bytes: bytes) -> Tuple[str, str, str, Optional[str]]:
+def _parse_auth_header(header_bytes: bytes) -> Tuple[str, str, str]:
     """Parse an X-Matrix auth header
 
     Args:
         header_bytes: header value
 
     Returns:
-        origin, key id, signature, destination.
         origin, key id, signature.
 
     Raises:
@@ -170,9 +157,7 @@ def _parse_auth_header(header_bytes: bytes) -> Tuple[str, str, str, Optional[str
     try:
         header_str = header_bytes.decode("utf-8")
         params = header_str.split(" ")[1].split(",")
-        param_dict: Dict[str, str] = {
-            k: v for k, v in [param.split("=", maxsplit=1) for param in params]
-        }
+        param_dict = {k: v for k, v in (kv.split("=", maxsplit=1) for kv in params)}
 
         def strip_quotes(value: str) -> str:
             if value.startswith('"'):
@@ -187,15 +172,7 @@ def _parse_auth_header(header_bytes: bytes) -> Tuple[str, str, str, Optional[str
 
         key = strip_quotes(param_dict["key"])
         sig = strip_quotes(param_dict["sig"])
-
-        # get the destination server_name from the auth header if it exists
-        destination = param_dict.get("destination")
-        if destination is not None:
-            destination = strip_quotes(destination)
-        else:
-            destination = None
-
-        return origin, key, sig, destination
+        return origin, key, sig
     except Exception as e:
         logger.warning(
             "Error parsing auth header '%s': %s",
@@ -203,7 +180,7 @@ def _parse_auth_header(header_bytes: bytes) -> Tuple[str, str, str, Optional[str
             e,
         )
         raise AuthenticationError(
-            HTTPStatus.BAD_REQUEST, "Malformed Authorization header", Codes.UNAUTHORIZED
+            400, "Malformed Authorization header", Codes.UNAUTHORIZED
         )
 
 

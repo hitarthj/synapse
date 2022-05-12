@@ -27,6 +27,7 @@ from typing import (
 )
 
 import attr
+from frozendict import frozendict
 
 from synapse.api.constants import EventContentFields, EventTypes, RelationTypes
 from synapse.api.errors import Codes, SynapseError
@@ -37,7 +38,8 @@ from synapse.util.frozenutils import unfreeze
 from . import EventBase
 
 if TYPE_CHECKING:
-    from synapse.handlers.relations import BundledAggregations
+    from synapse.server import HomeServer
+    from synapse.storage.databases.main.relations import BundledAggregations
 
 
 # Split strings on "." but not "\." This uses a negative lookbehind assertion for '\'
@@ -47,7 +49,7 @@ if TYPE_CHECKING:
 #       the literal fields "foo\" and "bar" but will instead be treated as "foo\\.bar"
 SPLIT_FIELD_REGEX = re.compile(r"(?<!\\)\.")
 
-CANONICALJSON_MAX_INT = (2**53) - 1
+CANONICALJSON_MAX_INT = (2 ** 53) - 1
 CANONICALJSON_MIN_INT = -CANONICALJSON_MAX_INT
 
 
@@ -203,9 +205,7 @@ def _copy_field(src: JsonDict, dst: JsonDict, field: List[str]) -> None:
     key_to_move = field.pop(-1)
     sub_dict = src
     for sub_field in field:  # e.g. sub_field => "content"
-        if sub_field in sub_dict and isinstance(
-            sub_dict[sub_field], collections.abc.Mapping
-        ):
+        if sub_field in sub_dict and type(sub_dict[sub_field]) in [dict, frozendict]:
             sub_dict = sub_dict[sub_field]
         else:
             return
@@ -396,6 +396,9 @@ class EventClientSerializer:
     clients.
     """
 
+    def __init__(self, hs: "HomeServer"):
+        self._msc3440_enabled = hs.config.experimental.msc3440_enabled
+
     def serialize_event(
         self,
         event: Union[JsonDict, EventBase],
@@ -403,7 +406,6 @@ class EventClientSerializer:
         *,
         config: SerializeEventConfig = _DEFAULT_SERIALIZE_EVENT_CONFIG,
         bundle_aggregations: Optional[Dict[str, "BundledAggregations"]] = None,
-        apply_edits: bool = True,
     ) -> JsonDict:
         """Serializes a single event.
 
@@ -411,10 +413,10 @@ class EventClientSerializer:
             event: The event being serialized.
             time_now: The current time in milliseconds
             config: Event serialization config
-            bundle_aggregations: A map from event_id to the aggregations to be bundled
-               into the event.
-            apply_edits: Whether the content of the event should be modified to reflect
-               any replacement in `bundle_aggregations[<event_id>].replace`.
+            bundle_aggregations: Whether to include the bundled aggregations for this
+                event. Only applies to non-state events. (State events never include
+                bundled aggregations.)
+
         Returns:
             The serialized event
         """
@@ -426,14 +428,14 @@ class EventClientSerializer:
 
         # Check if there are any bundled aggregations to include with the event.
         if bundle_aggregations:
-            if event.event_id in bundle_aggregations:
+            event_aggregations = bundle_aggregations.get(event.event_id)
+            if event_aggregations:
                 self._inject_bundled_aggregations(
                     event,
                     time_now,
                     config,
-                    bundle_aggregations,
+                    bundle_aggregations[event.event_id],
                     serialized_event,
-                    apply_edits=apply_edits,
                 )
 
         return serialized_event
@@ -470,49 +472,31 @@ class EventClientSerializer:
         event: EventBase,
         time_now: int,
         config: SerializeEventConfig,
-        bundled_aggregations: Dict[str, "BundledAggregations"],
+        aggregations: "BundledAggregations",
         serialized_event: JsonDict,
-        apply_edits: bool,
     ) -> None:
         """Potentially injects bundled aggregations into the unsigned portion of the serialized event.
 
         Args:
             event: The event being serialized.
             time_now: The current time in milliseconds
-            config: Event serialization config
-            bundled_aggregations: Bundled aggregations to be injected.
-                A map from event_id to aggregation data. Must contain at least an
-                entry for `event`.
-
-                While serializing the bundled aggregations this map may be searched
-                again for additional events in a recursive manner.
+            aggregations: The bundled aggregation to serialize.
             serialized_event: The serialized event which may be modified.
-            apply_edits: Whether the content of the event should be modified to reflect
-               any replacement in `aggregations.replace`.
+            config: Event serialization config
+
         """
-
-        # We have already checked that aggregations exist for this event.
-        event_aggregations = bundled_aggregations[event.event_id]
-
-        # The JSON dictionary to be added under the unsigned property of the event
-        # being serialized.
         serialized_aggregations = {}
 
-        if event_aggregations.annotations:
-            serialized_aggregations[
-                RelationTypes.ANNOTATION
-            ] = event_aggregations.annotations
+        if aggregations.annotations:
+            serialized_aggregations[RelationTypes.ANNOTATION] = aggregations.annotations
 
-        if event_aggregations.references:
-            serialized_aggregations[
-                RelationTypes.REFERENCE
-            ] = event_aggregations.references
+        if aggregations.references:
+            serialized_aggregations[RelationTypes.REFERENCE] = aggregations.references
 
-        if event_aggregations.replace:
-            # If there is an edit, optionally apply it to the event.
-            edit = event_aggregations.replace
-            if apply_edits:
-                self._apply_edit(event, serialized_event, edit)
+        if aggregations.replace:
+            # If there is an edit, apply it to the event.
+            edit = aggregations.replace
+            self._apply_edit(event, serialized_event, edit)
 
             # Include information about it in the relations dict.
             serialized_aggregations[RelationTypes.REPLACE] = {
@@ -521,16 +505,19 @@ class EventClientSerializer:
                 "sender": edit.sender,
             }
 
-        # Include any threaded replies to this event.
-        if event_aggregations.thread:
-            thread = event_aggregations.thread
+        # If this event is the start of a thread, include a summary of the replies.
+        if aggregations.thread:
+            thread = aggregations.thread
 
-            serialized_latest_event = self.serialize_event(
-                thread.latest_event,
-                time_now,
-                config=config,
-                bundle_aggregations=bundled_aggregations,
+            # Don't bundle aggregations as this could recurse forever.
+            serialized_latest_event = serialize_event(
+                thread.latest_event, time_now, config=config
             )
+            # Manually apply an edit, if one exists.
+            if thread.latest_edit:
+                self._apply_edit(
+                    thread.latest_event, serialized_latest_event, thread.latest_edit
+                )
 
             thread_summary = {
                 "latest_event": serialized_latest_event,
@@ -538,6 +525,8 @@ class EventClientSerializer:
                 "current_user_participated": thread.current_user_participated,
             }
             serialized_aggregations[RelationTypes.THREAD] = thread_summary
+            if self._msc3440_enabled:
+                serialized_aggregations[RelationTypes.UNSTABLE_THREAD] = thread_summary
 
         # Include the bundled aggregations in the event.
         if serialized_aggregations:
@@ -634,7 +623,7 @@ def validate_canonicaljson(value: Any) -> None:
         # Note that Infinity, -Infinity, and NaN are also considered floats.
         raise SynapseError(400, "Bad JSON value: float", Codes.BAD_JSON)
 
-    elif isinstance(value, collections.abc.Mapping):
+    elif isinstance(value, (dict, frozendict)):
         for v in value.values():
             validate_canonicaljson(v)
 

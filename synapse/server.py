@@ -91,11 +91,9 @@ from synapse.handlers.presence import (
     WorkerPresenceHandler,
 )
 from synapse.handlers.profile import ProfileHandler
-from synapse.handlers.push_rules import PushRulesHandler
 from synapse.handlers.read_marker import ReadMarkerHandler
 from synapse.handlers.receipts import ReceiptsHandler
 from synapse.handlers.register import RegistrationHandler
-from synapse.handlers.relations import RelationsHandler
 from synapse.handlers.room import (
     RoomContextHandler,
     RoomCreationHandler,
@@ -722,10 +720,6 @@ class HomeServer(metaclass=abc.ABCMeta):
         return PaginationHandler(self)
 
     @cache_in_self
-    def get_relations_handler(self) -> RelationsHandler:
-        return RelationsHandler(self)
-
-    @cache_in_self
     def get_room_context_handler(self) -> RoomContextHandler:
         return RoomContextHandler(self)
 
@@ -759,7 +753,7 @@ class HomeServer(metaclass=abc.ABCMeta):
 
     @cache_in_self
     def get_event_client_serializer(self) -> EventClientSerializer:
-        return EventClientSerializer()
+        return EventClientSerializer(self)
 
     @cache_in_self
     def get_password_policy_handler(self) -> PasswordPolicyHandler:
@@ -810,10 +804,6 @@ class HomeServer(metaclass=abc.ABCMeta):
     @cache_in_self
     def get_account_handler(self) -> AccountHandler:
         return AccountHandler(self)
-
-    @cache_in_self
-    def get_push_rules_handler(self) -> PushRulesHandler:
-        return PushRulesHandler(self)
 
     @cache_in_self
     def get_outbound_redis_connection(self) -> "ConnectionHandler":

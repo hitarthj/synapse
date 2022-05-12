@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any
-
-from synapse.types import JsonDict
 from synapse.util.module_loader import load_module
 
 from ._base import Config
@@ -23,7 +20,7 @@ from ._base import Config
 class ThirdPartyRulesConfig(Config):
     section = "thirdpartyrules"
 
-    def read_config(self, config: JsonDict, **kwargs: Any) -> None:
+    def read_config(self, config, **kwargs):
         self.third_party_event_rules = None
 
         provider = config.get("third_party_event_rules", None)

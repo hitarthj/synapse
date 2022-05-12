@@ -50,18 +50,25 @@ if [[ -n "$WORKERS" ]]; then
 
   export COMPLEMENT_BASE_IMAGE=complement-synapse-workers
   COMPLEMENT_DOCKERFILE=SynapseWorkers.Dockerfile
-
   # And provide some more configuration to complement.
-  export COMPLEMENT_SPAWN_HS_TIMEOUT_SECS=60
+  export COMPLEMENT_CA=true
+  export COMPLEMENT_SPAWN_HS_TIMEOUT_SECS=25
 else
   export COMPLEMENT_BASE_IMAGE=complement-synapse
-  COMPLEMENT_DOCKERFILE=Dockerfile
+  COMPLEMENT_DOCKERFILE=Synapse.Dockerfile
 fi
 
 # Build the Complement image from the Synapse image we just built.
-docker build -t $COMPLEMENT_BASE_IMAGE -f "docker/complement/$COMPLEMENT_DOCKERFILE" "docker/complement"
+docker build -t $COMPLEMENT_BASE_IMAGE -f "$COMPLEMENT_DIR/dockerfiles/$COMPLEMENT_DOCKERFILE" "$COMPLEMENT_DIR/dockerfiles"
+
+cd "$COMPLEMENT_DIR"
+
+EXTRA_COMPLEMENT_ARGS=""
+if [[ -n "$1" ]]; then
+  # A test name regex has been set, supply it to Complement
+  EXTRA_COMPLEMENT_ARGS+="-run $1 "
+fi
 
 # Run the tests!
 echo "Images built; running complement"
-cd "$COMPLEMENT_DIR"
-go test -v -tags synapse_blacklist,msc2716,msc3030,faster_joins -count=1 "$@" ./tests/...
+go test -v -tags synapse_blacklist,msc2403,msc2716,msc3030 -count=1 $EXTRA_COMPLEMENT_ARGS ./tests/...

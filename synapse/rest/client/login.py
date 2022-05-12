@@ -47,10 +47,6 @@ from synapse.rest.client._base import client_patterns
 from synapse.rest.well_known import WellKnownBuilder
 from synapse.types import JsonDict, UserID
 
-from magic_admin import Magic
-from magic_admin.utils.http import parse_authorization_header_value
-from magic_admin.error import DIDTokenError
-
 if TYPE_CHECKING:
     from synapse.server import HomeServer
 
@@ -72,7 +68,6 @@ class LoginRestServlet(RestServlet):
     CAS_TYPE = "m.login.cas"
     SSO_TYPE = "m.login.sso"
     TOKEN_TYPE = "m.login.token"
-    MAGIC_LINK_TYPE = "m.login.magic"
     JWT_TYPE = "org.matrix.login.jwt"
     JWT_TYPE_DEPRECATED = "m.login.jwt"
     APPSERVICE_TYPE = "m.login.application_service"
@@ -208,12 +203,6 @@ class LoginRestServlet(RestServlet):
             elif login_submission["type"] == LoginRestServlet.TOKEN_TYPE:
                 await self._address_ratelimiter.ratelimit(None, request.getClientIP())
                 result = await self._do_token_login(
-                    login_submission,
-                    should_issue_refresh_token=should_issue_refresh_token,
-                )
-            elif login_submission["type"] == LoginRestServlet.MAGIC_LINK_TYPE:
-                await self._address_ratelimiter.ratelimit(None, request.getClientIP())
-                result = await self._do_magic_login(
                     login_submission,
                     should_issue_refresh_token=should_issue_refresh_token,
                 )
@@ -353,15 +342,6 @@ class LoginRestServlet(RestServlet):
             user_id = canonical_uid
 
         device_id = login_submission.get("device_id")
-
-        # If device_id is present, check that device_id is not longer than a reasonable 512 characters
-        if device_id and len(device_id) > 512:
-            raise LoginError(
-                400,
-                "device_id cannot be longer than 512 characters.",
-                errcode=Codes.INVALID_PARAM,
-            )
-
         initial_display_name = login_submission.get("initial_device_display_name")
         (
             device_id,
@@ -422,47 +402,6 @@ class LoginRestServlet(RestServlet):
             should_issue_refresh_token=should_issue_refresh_token,
             auth_provider_session_id=res.auth_provider_session_id,
         )
-
-    async def _do_magic_login(
-        self, login_submission: JsonDict, should_issue_refresh_token: bool = False
-    ) -> LoginResponse:
-        token = login_submission.get("token", None)
-        if token is None:
-            raise LoginError(
-                403, "Token field is missing", errcode=Codes.FORBIDDEN
-            )
-
-        magic = Magic(api_secret_key='sk_live_AD8507AEF3813E74')
-       
-
-        try:
-            magic.Token.validate(token)
-            public_address = magic.Token.get_public_address(token)
-
-            issuer = magic.Token.get_issuer(token)
-            magic_response = magic.User.get_metadata_by_issuer(issuer)
-            
-        
-            user_id = UserID(public_address.replace("0x", "").lower() , self.hs.hostname).to_string();
-
-        except DIDTokenError as e:
-            raise LoginError(403, 'DID Token is invalid', errcode=Codes.FORBIDDEN)
-        
-
-
-        logger.info("_do_magic_login user id: %r", user_id);
-
-
-        result = await self._complete_login(
-            user_id,
-            login_submission,
-            create_non_existent_users=True,
-            should_issue_refresh_token=should_issue_refresh_token,
-        )
-
-        return result
-
-
 
     async def _do_jwt_login(
         self, login_submission: JsonDict, should_issue_refresh_token: bool = False

@@ -11,17 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Any, Optional
+from typing import Optional
 
 from synapse.config._base import Config
 from synapse.config._util import validate_config
-from synapse.types import JsonDict
 
 
 class FederationConfig(Config):
     section = "federation"
 
-    def read_config(self, config: JsonDict, **kwargs: Any) -> None:
+    def read_config(self, config, **kwargs):
         # FIXME: federation_domain_whitelist needs sytests
         self.federation_domain_whitelist: Optional[dict] = None
         federation_domain_whitelist = config.get("federation_domain_whitelist", None)
@@ -46,10 +45,10 @@ class FederationConfig(Config):
         )
 
         self.allow_device_name_lookup_over_federation = config.get(
-            "allow_device_name_lookup_over_federation", False
+            "allow_device_name_lookup_over_federation", True
         )
 
-    def generate_config_section(self, **kwargs: Any) -> str:
+    def generate_config_section(self, config_dir_path, server_name, **kwargs):
         return """\
         ## Federation ##
 
@@ -81,11 +80,11 @@ class FederationConfig(Config):
         #
         #allow_profile_lookup_over_federation: false
 
-        # Uncomment to allow device display name lookup over federation. By default, the
-        # Federation API prevents other homeservers from obtaining the display names of
-        # user devices on this homeserver. Defaults to 'false'.
+        # Uncomment to disable device display name lookup over federation. By default, the
+        # Federation API allows other homeservers to obtain device display names of any user
+        # on this homeserver. Defaults to 'true'.
         #
-        #allow_device_name_lookup_over_federation: true
+        #allow_device_name_lookup_over_federation: false
         """
 
 

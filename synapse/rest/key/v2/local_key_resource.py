@@ -76,17 +76,17 @@ class LocalKey(Resource):
 
     def response_json_object(self) -> JsonDict:
         verify_keys = {}
-        for signing_key in self.config.key.signing_key:
-            verify_key_bytes = signing_key.verify_key.encode()
-            key_id = "%s:%s" % (signing_key.alg, signing_key.version)
+        for key in self.config.key.signing_key:
+            verify_key_bytes = key.verify_key.encode()
+            key_id = "%s:%s" % (key.alg, key.version)
             verify_keys[key_id] = {"key": encode_base64(verify_key_bytes)}
 
         old_verify_keys = {}
-        for key_id, old_signing_key in self.config.key.old_signing_keys.items():
-            verify_key_bytes = old_signing_key.encode()
+        for key_id, key in self.config.key.old_signing_keys.items():
+            verify_key_bytes = key.encode()
             old_verify_keys[key_id] = {
                 "key": encode_base64(verify_key_bytes),
-                "expired_ts": old_signing_key.expired,
+                "expired_ts": key.expired_ts,
             }
 
         json_object = {

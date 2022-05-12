@@ -15,6 +15,7 @@ from typing import Tuple
 from unittest.mock import Mock, patch
 from urllib.parse import quote
 
+from twisted.internet import defer
 from twisted.test.proto_helpers import MemoryReactor
 
 import synapse.rest.admin
@@ -29,7 +30,6 @@ from synapse.util import Clock
 
 from tests import unittest
 from tests.storage.test_user_directory import GetUserDirectoryTables
-from tests.test_utils import make_awaitable
 from tests.test_utils.event_injection import inject_member_event
 from tests.unittest import override_config
 
@@ -351,7 +351,6 @@ class UserDirectoryTestCase(unittest.HomeserverTestCase):
             self.handler.handle_local_profile_change(regular_user_id, profile_info)
         )
         profile = self.get_success(self.store.get_user_in_directory(regular_user_id))
-        assert profile is not None
         self.assertTrue(profile["display_name"] == display_name)
 
     def test_handle_local_profile_change_with_deactivated_user(self) -> None:
@@ -370,7 +369,6 @@ class UserDirectoryTestCase(unittest.HomeserverTestCase):
 
         # profile is in directory
         profile = self.get_success(self.store.get_user_in_directory(r_user_id))
-        assert profile is not None
         self.assertTrue(profile["display_name"] == display_name)
 
         # deactivate user
@@ -439,7 +437,7 @@ class UserDirectoryTestCase(unittest.HomeserverTestCase):
             )
         )
 
-        mock_remove_from_user_dir = Mock(return_value=make_awaitable(None))
+        mock_remove_from_user_dir = Mock(return_value=defer.succeed(None))
         with patch.object(
             self.store, "remove_from_user_dir", mock_remove_from_user_dir
         ):
@@ -454,7 +452,7 @@ class UserDirectoryTestCase(unittest.HomeserverTestCase):
             self.store.register_user(user_id=r_user_id, password_hash=None)
         )
 
-        mock_remove_from_user_dir = Mock(return_value=make_awaitable(None))
+        mock_remove_from_user_dir = Mock(return_value=defer.succeed(None))
         with patch.object(
             self.store, "remove_from_user_dir", mock_remove_from_user_dir
         ):

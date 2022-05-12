@@ -23,7 +23,7 @@ from typing_extensions import Final
 MAX_PDU_SIZE = 65536
 
 # the "depth" field on events is limited to 2**63 - 1
-MAX_DEPTH = 2**63 - 1
+MAX_DEPTH = 2 ** 63 - 1
 
 # the maximum length for a room alias is 255 characters
 MAX_ALIAS_LENGTH = 255
@@ -179,6 +179,8 @@ class RelationTypes:
     REPLACE: Final = "m.replace"
     REFERENCE: Final = "m.reference"
     THREAD: Final = "m.thread"
+    # TODO Remove this in Synapse >= v1.57.0.
+    UNSTABLE_THREAD: Final = "io.element.thread"
 
 
 class LimitBlockingTypes:
@@ -255,5 +257,7 @@ class GuestAccess:
 
 class ReceiptTypes:
     READ: Final = "m.read"
-    READ_PRIVATE: Final = "org.matrix.msc2285.read.private"
-    FULLY_READ: Final = "m.fully_read"
+
+
+class ReadReceiptEventFields:
+    MSC2285_HIDDEN: Final = "org.matrix.msc2285.hidden"

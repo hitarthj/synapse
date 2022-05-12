@@ -17,7 +17,7 @@ import logging
 import typing
 from enum import Enum, auto
 from sys import intern
-from typing import Any, Callable, Dict, List, Optional, Sized, TypeVar
+from typing import Any, Callable, Dict, List, Optional, Sized
 
 import attr
 from prometheus_client.core import Gauge
@@ -195,10 +195,8 @@ KNOWN_KEYS = {
     )
 }
 
-T = TypeVar("T", Optional[str], str)
 
-
-def intern_string(string: T) -> T:
+def intern_string(string: Optional[str]) -> Optional[str]:
     """Takes a (potentially) unicode string and interns it if it's ascii"""
     if string is None:
         return None

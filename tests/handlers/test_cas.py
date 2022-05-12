@@ -11,14 +11,9 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-from typing import Any, Dict
 from unittest.mock import Mock
 
-from twisted.test.proto_helpers import MemoryReactor
-
 from synapse.handlers.cas import CasResponse
-from synapse.server import HomeServer
-from synapse.util import Clock
 
 from tests.test_utils import simple_async_mock
 from tests.unittest import HomeserverTestCase, override_config
@@ -29,7 +24,7 @@ SERVER_URL = "https://issuer/"
 
 
 class CasHandlerTestCase(HomeserverTestCase):
-    def default_config(self) -> Dict[str, Any]:
+    def default_config(self):
         config = super().default_config()
         config["public_baseurl"] = BASE_URL
         cas_config = {
@@ -45,7 +40,7 @@ class CasHandlerTestCase(HomeserverTestCase):
 
         return config
 
-    def make_homeserver(self, reactor: MemoryReactor, clock: Clock) -> HomeServer:
+    def make_homeserver(self, reactor, clock):
         hs = self.setup_test_homeserver()
 
         self.handler = hs.get_cas_handler()
@@ -56,7 +51,7 @@ class CasHandlerTestCase(HomeserverTestCase):
 
         return hs
 
-    def test_map_cas_user_to_user(self) -> None:
+    def test_map_cas_user_to_user(self):
         """Ensure that mapping the CAS user returned from a provider to an MXID works properly."""
 
         # stub out the auth handler
@@ -80,7 +75,7 @@ class CasHandlerTestCase(HomeserverTestCase):
             auth_provider_session_id=None,
         )
 
-    def test_map_cas_user_to_existing_user(self) -> None:
+    def test_map_cas_user_to_existing_user(self):
         """Existing users can log in with CAS account."""
         store = self.hs.get_datastores().main
         self.get_success(
@@ -124,7 +119,7 @@ class CasHandlerTestCase(HomeserverTestCase):
             auth_provider_session_id=None,
         )
 
-    def test_map_cas_user_to_invalid_localpart(self) -> None:
+    def test_map_cas_user_to_invalid_localpart(self):
         """CAS automaps invalid characters to base-64 encoding."""
 
         # stub out the auth handler
@@ -155,7 +150,7 @@ class CasHandlerTestCase(HomeserverTestCase):
             }
         }
     )
-    def test_required_attributes(self) -> None:
+    def test_required_attributes(self):
         """The required attributes must be met from the CAS response."""
 
         # stub out the auth handler
@@ -171,7 +166,7 @@ class CasHandlerTestCase(HomeserverTestCase):
         auth_handler.complete_sso_login.assert_not_called()
 
         # The response doesn't have any department.
-        cas_response = CasResponse("test_user", {"userGroup": ["staff"]})
+        cas_response = CasResponse("test_user", {"userGroup": "staff"})
         request.reset_mock()
         self.get_success(
             self.handler._handle_cas_response(request, cas_response, "redirect_uri", "")
@@ -201,16 +196,4 @@ class CasHandlerTestCase(HomeserverTestCase):
 
 def _mock_request():
     """Returns a mock which will stand in as a SynapseRequest"""
-    mock = Mock(
-        spec=[
-            "finish",
-            "getClientAddress",
-            "getHeader",
-            "setHeader",
-            "setResponseCode",
-            "write",
-        ]
-    )
-    # `_disconnected` musn't be another `Mock`, otherwise it will be truthy.
-    mock._disconnected = False
-    return mock
+    return Mock(spec=["getClientIP", "getHeader", "_disconnected"])

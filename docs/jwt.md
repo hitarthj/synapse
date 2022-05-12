@@ -17,6 +17,9 @@ follows:
 }
 ```
 
+Note that the login type of `m.login.jwt` is supported, but is deprecated. This
+will be removed in a future version of Synapse.
+
 The `token` field should include the JSON web token with the following claims:
 
 * A claim that encodes the local part of the user ID is required. By default,

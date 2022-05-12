@@ -573,7 +573,7 @@ class StateResolutionHandler:
         """
         group_names = frozenset(state_groups_ids.keys())
 
-        async with self.resolve_linearizer.queue(group_names):
+        with (await self.resolve_linearizer.queue(group_names)):
             cache = self._state_cache.get(group_names, None)
             if cache:
                 return cache
@@ -800,7 +800,7 @@ class StateResolutionStore:
 
         return self.store.get_events(
             event_ids,
-            redact_behaviour=EventRedactBehaviour.as_is,
+            redact_behaviour=EventRedactBehaviour.AS_IS,
             get_prev_content=False,
             allow_rejected=allow_rejected,
         )

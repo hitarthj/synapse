@@ -19,11 +19,8 @@ import email.utils
 import logging
 import os
 from enum import Enum
-from typing import Any
 
 import attr
-
-from synapse.types import JsonDict
 
 from ._base import Config, ConfigError
 
@@ -76,7 +73,7 @@ class EmailSubjectConfig:
 class EmailConfig(Config):
     section = "email"
 
-    def read_config(self, config: JsonDict, **kwargs: Any) -> None:
+    def read_config(self, config, **kwargs):
         # TODO: We should separate better the email configuration from the notification
         # and account validity config.
 
@@ -357,7 +354,7 @@ class EmailConfig(Config):
                     path=("email", "invite_client_location"),
                 )
 
-    def generate_config_section(self, **kwargs: Any) -> str:
+    def generate_config_section(self, config_dir_path, server_name, **kwargs):
         return (
             """\
         # Configuration for sending emails from Synapse.

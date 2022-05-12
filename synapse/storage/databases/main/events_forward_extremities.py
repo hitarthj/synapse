@@ -66,15 +66,13 @@ class EventForwardExtremitiesStore(
             """
 
             txn.execute(sql, (event_id, room_id))
-
-            deleted_count = txn.rowcount
             logger.info(
                 "Deleted %s extra forward extremities for room %s",
-                deleted_count,
+                txn.rowcount,
                 room_id,
             )
 
-            if deleted_count > 0:
+            if txn.rowcount > 0:
                 # Invalidate the cache
                 self._invalidate_cache_and_stream(
                     txn,
@@ -82,7 +80,7 @@ class EventForwardExtremitiesStore(
                     (room_id,),
                 )
 
-            return deleted_count
+            return txn.rowcount
 
         return await self.db_pool.runInteraction(
             "delete_forward_extremities_for_room",

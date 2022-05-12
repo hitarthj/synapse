@@ -21,8 +21,6 @@ from prometheus_client.core import REGISTRY, GaugeMetricFamily
 
 from twisted.internet import reactor
 
-from synapse.metrics._types import Collector
-
 #
 # Twisted reactor metrics
 #
@@ -56,7 +54,7 @@ class EpollWrapper:
         return getattr(self._poller, item)
 
 
-class ReactorLastSeenMetric(Collector):
+class ReactorLastSeenMetric:
     def __init__(self, epoll_wrapper: EpollWrapper):
         self._epoll_wrapper = epoll_wrapper
 

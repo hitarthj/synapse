@@ -34,7 +34,6 @@ import attr
 from synapse.api.constants import EventContentFields, EventTypes, JoinRules
 from synapse.api.errors import StoreError
 from synapse.api.room_versions import RoomVersion, RoomVersions
-from synapse.config.homeserver import HomeServerConfig
 from synapse.events import EventBase
 from synapse.storage._base import SQLBaseStore, db_to_json
 from synapse.storage.database import (
@@ -99,7 +98,7 @@ class RoomWorkerStore(CacheInvalidationWorkerStore):
     ):
         super().__init__(database, db_conn, hs)
 
-        self.config: HomeServerConfig = hs.config
+        self.config = hs.config
 
     async def store_room(
         self,
@@ -1075,37 +1074,6 @@ class RoomWorkerStore(CacheInvalidationWorkerStore):
         return await self.db_pool.runInteraction(
             "get_rooms_for_retention_period_in_range",
             get_rooms_for_retention_period_in_range_txn,
-        )
-
-    async def clear_partial_state_room(self, room_id: str) -> bool:
-        # this can race with incoming events, so we watch out for FK errors.
-        # TODO(faster_joins): this still doesn't completely fix the race, since the persist process
-        #   is not atomic. I fear we need an application-level lock.
-        try:
-            await self.db_pool.runInteraction(
-                "clear_partial_state_room", self._clear_partial_state_room_txn, room_id
-            )
-            return True
-        except self.db_pool.engine.module.DatabaseError as e:
-            # TODO(faster_joins): how do we distinguish between FK errors and other errors?
-            logger.warning(
-                "Exception while clearing lazy partial-state-room %s, retrying: %s",
-                room_id,
-                e,
-            )
-            return False
-
-    @staticmethod
-    def _clear_partial_state_room_txn(txn: LoggingTransaction, room_id: str) -> None:
-        DatabasePool.simple_delete_txn(
-            txn,
-            table="partial_state_rooms_servers",
-            keyvalues={"room_id": room_id},
-        )
-        DatabasePool.simple_delete_one_txn(
-            txn,
-            table="partial_state_rooms",
-            keyvalues={"room_id": room_id},
         )
 
 

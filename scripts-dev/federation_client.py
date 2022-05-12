@@ -38,7 +38,7 @@ import argparse
 import base64
 import json
 import sys
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Optional
 from urllib import parse as urlparse
 
 import requests
@@ -47,14 +47,13 @@ import signedjson.types
 import srvlookup
 import yaml
 from requests.adapters import HTTPAdapter
-from urllib3 import HTTPConnectionPool
 
 # uncomment the following to enable debug logging of http requests
 # from httplib import HTTPConnection
 # HTTPConnection.debuglevel = 1
 
 
-def encode_base64(input_bytes: bytes) -> str:
+def encode_base64(input_bytes):
     """Encode bytes as a base64 string without any padding."""
 
     input_len = len(input_bytes)
@@ -64,7 +63,7 @@ def encode_base64(input_bytes: bytes) -> str:
     return output_string
 
 
-def encode_canonical_json(value: object) -> bytes:
+def encode_canonical_json(value):
     return json.dumps(
         value,
         # Encode code-points outside of ASCII as UTF-8 rather than \u escapes
@@ -125,13 +124,8 @@ def request(
     authorization_headers = []
 
     for key, sig in signed_json["signatures"][origin_name].items():
-        header = 'X-Matrix origin=%s,key="%s",sig="%s",destination="%s"' % (
-            origin_name,
-            key,
-            sig,
-            destination,
-        )
-        authorization_headers.append(header)
+        header = 'X-Matrix origin=%s,key="%s",sig="%s"' % (origin_name, key, sig)
+        authorization_headers.append(header.encode("ascii"))
         print("Authorization: %s" % header, file=sys.stderr)
 
     dest = "matrix://%s%s" % (destination, path)
@@ -140,10 +134,7 @@ def request(
     s = requests.Session()
     s.mount("matrix://", MatrixConnectionAdapter())
 
-    headers: Dict[str, str] = {
-        "Host": destination,
-        "Authorization": authorization_headers[0],
-    }
+    headers = {"Host": destination, "Authorization": authorization_headers[0]}
 
     if method == "POST":
         headers["Content-Type"] = "application/json"
@@ -158,7 +149,7 @@ def request(
     )
 
 
-def main() -> None:
+def main():
     parser = argparse.ArgumentParser(
         description="Signs and sends a federation request to a matrix homeserver"
     )
@@ -216,7 +207,6 @@ def main() -> None:
     if not args.server_name or not args.signing_key:
         read_args_from_config(args)
 
-    assert isinstance(args.signing_key, str)
     algorithm, version, key_base64 = args.signing_key.split()
     key = signedjson.key.decode_signing_key_base64(algorithm, version, key_base64)
 
@@ -238,7 +228,7 @@ def main() -> None:
     print("")
 
 
-def read_args_from_config(args: argparse.Namespace) -> None:
+def read_args_from_config(args):
     with open(args.config, "r") as fh:
         config = yaml.safe_load(fh)
 
@@ -255,7 +245,7 @@ def read_args_from_config(args: argparse.Namespace) -> None:
 
 class MatrixConnectionAdapter(HTTPAdapter):
     @staticmethod
-    def lookup(s: str, skip_well_known: bool = False) -> Tuple[str, int]:
+    def lookup(s, skip_well_known=False):
         if s[-1] == "]":
             # ipv6 literal (with no port)
             return s, 8448
@@ -281,7 +271,7 @@ class MatrixConnectionAdapter(HTTPAdapter):
             return s, 8448
 
     @staticmethod
-    def get_well_known(server_name: str) -> Optional[str]:
+    def get_well_known(server_name):
         uri = "https://%s/.well-known/matrix/server" % (server_name,)
         print("fetching %s" % (uri,), file=sys.stderr)
 
@@ -304,9 +294,7 @@ class MatrixConnectionAdapter(HTTPAdapter):
             print("Invalid response from %s: %s" % (uri, e), file=sys.stderr)
         return None
 
-    def get_connection(
-        self, url: str, proxies: Optional[Dict[str, str]] = None
-    ) -> HTTPConnectionPool:
+    def get_connection(self, url, proxies=None):
         parsed = urlparse.urlparse(url)
 
         (host, port) = self.lookup(parsed.netloc)

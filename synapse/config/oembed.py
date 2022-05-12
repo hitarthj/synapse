@@ -40,7 +40,7 @@ class OembedConfig(Config):
 
     section = "oembed"
 
-    def read_config(self, config: JsonDict, **kwargs: Any) -> None:
+    def read_config(self, config, **kwargs):
         oembed_config: Dict[str, Any] = config.get("oembed") or {}
 
         # A list of patterns which will be used.
@@ -143,7 +143,7 @@ class OembedConfig(Config):
         )
         return re.compile(pattern)
 
-    def generate_config_section(self, **kwargs: Any) -> str:
+    def generate_config_section(self, **kwargs):
         return """\
         # oEmbed allows for easier embedding content from a website. It can be
         # used for generating URLs previews of services which support it.

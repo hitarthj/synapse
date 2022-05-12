@@ -211,7 +211,6 @@ class AuthHandler:
         self.macaroon_gen = hs.get_macaroon_generator()
         self._password_enabled = hs.config.auth.password_enabled
         self._password_localdb_enabled = hs.config.auth.password_localdb_enabled
-        self._third_party_rules = hs.get_third_party_event_rules()
 
         # Ratelimiter for failed auth during UIA. Uses same ratelimit config
         # as per `rc_login.failed_attempts`.
@@ -481,7 +480,7 @@ class AuthHandler:
             sid = authdict["session"]
 
         # Convert the URI and method to strings.
-        uri = request.uri.decode("utf-8")
+        uri = request.uri.decode("utf-8")  # type: ignore
         method = request.method.decode("utf-8")
 
         # If there's no session ID, create a new session.
@@ -551,7 +550,7 @@ class AuthHandler:
             await self.store.set_ui_auth_clientdict(sid, clientdict)
 
         user_agent = get_request_user_agent(request)
-        clientip = request.getClientAddress().host
+        clientip = request.getClientIP()
 
         await self.store.add_user_agent_ip_to_ui_auth_session(
             session.session_id, user_agent, clientip
@@ -1505,8 +1504,6 @@ class AuthHandler:
         await self.store.user_add_threepid(
             user_id, medium, address, validated_at, self.hs.get_clock().time_msec()
         )
-
-        await self._third_party_rules.on_threepid_bind(user_id, medium, address)
 
     async def delete_threepid(
         self, user_id: str, medium: str, address: str, id_server: Optional[str] = None

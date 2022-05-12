@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Set
+from typing import Set
 
-from synapse.types import JsonDict
 from synapse.util.check_dependencies import DependencyException, check_requirements
 
 from ._base import Config, ConfigError
@@ -23,7 +22,7 @@ from ._base import Config, ConfigError
 class TracerConfig(Config):
     section = "tracing"
 
-    def read_config(self, config: JsonDict, **kwargs: Any) -> None:
+    def read_config(self, config, **kwargs):
         opentracing_config = config.get("opentracing")
         if opentracing_config is None:
             opentracing_config = {}
@@ -66,7 +65,7 @@ class TracerConfig(Config):
                 )
             self.force_tracing_for_users.add(u)
 
-    def generate_config_section(cls, **kwargs: Any) -> str:
+    def generate_config_section(cls, **kwargs):
         return """\
         ## Opentracing ##
 

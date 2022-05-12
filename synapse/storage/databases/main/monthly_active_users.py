@@ -12,16 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, cast
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from synapse.metrics.background_process_metrics import wrap_as_background_process
+from synapse.storage._base import SQLBaseStore
 from synapse.storage.database import (
     DatabasePool,
     LoggingDatabaseConnection,
-    LoggingTransaction,
     make_in_list_sql_clause,
 )
-from synapse.storage.databases.main.registration import RegistrationWorkerStore
 from synapse.util.caches.descriptors import cached
 from synapse.util.threepids import canonicalise_email
 
@@ -35,7 +34,7 @@ logger = logging.getLogger(__name__)
 LAST_SEEN_GRANULARITY = 60 * 60 * 1000
 
 
-class MonthlyActiveUsersWorkerStore(RegistrationWorkerStore):
+class MonthlyActiveUsersWorkerStore(SQLBaseStore):
     def __init__(
         self,
         database: DatabasePool,
@@ -46,29 +45,8 @@ class MonthlyActiveUsersWorkerStore(RegistrationWorkerStore):
         self._clock = hs.get_clock()
         self.hs = hs
 
-        if hs.config.redis.redis_enabled:
-            # If we're using Redis, we can shift this update process off to
-            # the background worker
-            self._update_on_this_worker = hs.config.worker.run_background_tasks
-        else:
-            # If we're NOT using Redis, this must be handled by the master
-            self._update_on_this_worker = hs.get_instance_name() == "master"
-
         self._limit_usage_by_mau = hs.config.server.limit_usage_by_mau
         self._max_mau_value = hs.config.server.max_mau_value
-
-        self._mau_stats_only = hs.config.server.mau_stats_only
-
-        if self._update_on_this_worker:
-            # Do not add more reserved users than the total allowable number
-            self.db_pool.new_transaction(
-                db_conn,
-                "initialise_mau_threepids",
-                [],
-                [],
-                self._initialise_reserved_users,
-                hs.config.server.mau_limits_reserved_threepids[: self._max_mau_value],
-            )
 
     @cached(num_args=0)
     async def get_monthly_active_count(self) -> int:
@@ -78,7 +56,7 @@ class MonthlyActiveUsersWorkerStore(RegistrationWorkerStore):
             Number of current monthly active users
         """
 
-        def _count_users(txn: LoggingTransaction) -> int:
+        def _count_users(txn):
             # Exclude app service users
             sql = """
                 SELECT COUNT(*)
@@ -88,7 +66,7 @@ class MonthlyActiveUsersWorkerStore(RegistrationWorkerStore):
                 WHERE (users.appservice_id IS NULL OR users.appservice_id = '');
             """
             txn.execute(sql)
-            (count,) = cast(Tuple[int], txn.fetchone())
+            (count,) = txn.fetchone()
             return count
 
         return await self.db_pool.runInteraction("count_users", _count_users)
@@ -106,7 +84,7 @@ class MonthlyActiveUsersWorkerStore(RegistrationWorkerStore):
 
         """
 
-        def _count_users_by_service(txn: LoggingTransaction) -> Dict[str, int]:
+        def _count_users_by_service(txn):
             sql = """
                 SELECT COALESCE(appservice_id, 'native'), COUNT(*)
                 FROM monthly_active_users
@@ -115,7 +93,7 @@ class MonthlyActiveUsersWorkerStore(RegistrationWorkerStore):
             """
 
             txn.execute(sql)
-            result = cast(List[Tuple[str, int]], txn.fetchall())
+            result = txn.fetchall()
             return dict(result)
 
         return await self.db_pool.runInteraction(
@@ -163,12 +141,12 @@ class MonthlyActiveUsersWorkerStore(RegistrationWorkerStore):
         )
 
     @wrap_as_background_process("reap_monthly_active_users")
-    async def reap_monthly_active_users(self) -> None:
+    async def reap_monthly_active_users(self):
         """Cleans out monthly active user table to ensure that no stale
         entries exist.
         """
 
-        def _reap_users(txn: LoggingTransaction, reserved_users: List[str]) -> None:
+        def _reap_users(txn, reserved_users):
             """
             Args:
                 reserved_users (tuple): reserved users to preserve
@@ -242,19 +220,36 @@ class MonthlyActiveUsersWorkerStore(RegistrationWorkerStore):
             "reap_monthly_active_users", _reap_users, reserved_users
         )
 
-    def _initialise_reserved_users(
-        self, txn: LoggingTransaction, threepids: List[dict]
-    ) -> None:
+
+class MonthlyActiveUsersStore(MonthlyActiveUsersWorkerStore):
+    def __init__(
+        self,
+        database: DatabasePool,
+        db_conn: LoggingDatabaseConnection,
+        hs: "HomeServer",
+    ):
+        super().__init__(database, db_conn, hs)
+
+        self._mau_stats_only = hs.config.server.mau_stats_only
+
+        # Do not add more reserved users than the total allowable number
+        self.db_pool.new_transaction(
+            db_conn,
+            "initialise_mau_threepids",
+            [],
+            [],
+            self._initialise_reserved_users,
+            hs.config.server.mau_limits_reserved_threepids[: self._max_mau_value],
+        )
+
+    def _initialise_reserved_users(self, txn, threepids):
         """Ensures that reserved threepids are accounted for in the MAU table, should
         be called on start up.
 
         Args:
-            txn:
-            threepids: List of threepid dicts to reserve
+            txn (cursor):
+            threepids (list[dict]): List of threepid dicts to reserve
         """
-        assert (
-            self._update_on_this_worker
-        ), "This worker is not designated to update MAUs"
 
         # XXX what is this function trying to achieve?  It upserts into
         # monthly_active_users for each *registered* reserved mau user, but why?
@@ -288,10 +283,6 @@ class MonthlyActiveUsersWorkerStore(RegistrationWorkerStore):
         Args:
             user_id: user to add/update
         """
-        assert (
-            self._update_on_this_worker
-        ), "This worker is not designated to update MAUs"
-
         # Support user never to be included in MAU stats. Note I can't easily call this
         # from upsert_monthly_active_user_txn because then I need a _txn form of
         # is_support_user which is complicated because I want to cache the result.
@@ -308,9 +299,7 @@ class MonthlyActiveUsersWorkerStore(RegistrationWorkerStore):
             "upsert_monthly_active_user", self.upsert_monthly_active_user_txn, user_id
         )
 
-    def upsert_monthly_active_user_txn(
-        self, txn: LoggingTransaction, user_id: str
-    ) -> None:
+    def upsert_monthly_active_user_txn(self, txn, user_id):
         """Updates or inserts monthly active user member
 
         We consciously do not call is_support_txn from this method because it
@@ -327,9 +316,6 @@ class MonthlyActiveUsersWorkerStore(RegistrationWorkerStore):
             txn (cursor):
             user_id (str): user to add/update
         """
-        assert (
-            self._update_on_this_worker
-        ), "This worker is not designated to update MAUs"
 
         # Am consciously deciding to lock the table on the basis that is ought
         # never be a big table and alternative approaches (batching multiple
@@ -350,17 +336,13 @@ class MonthlyActiveUsersWorkerStore(RegistrationWorkerStore):
             txn, self.user_last_seen_monthly_active, (user_id,)
         )
 
-    async def populate_monthly_active_users(self, user_id: str) -> None:
+    async def populate_monthly_active_users(self, user_id):
         """Checks on the state of monthly active user limits and optionally
         add the user to the monthly active tables
 
         Args:
             user_id(str): the user_id to query
         """
-        assert (
-            self._update_on_this_worker
-        ), "This worker is not designated to update MAUs"
-
         if self._limit_usage_by_mau or self._mau_stats_only:
             # Trial users and guests should not be included as part of MAU group
             is_guest = await self.is_guest(user_id)

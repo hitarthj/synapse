@@ -47,7 +47,6 @@ from synapse.storage.database import (
 )
 from synapse.storage.databases.main.events_worker import EventCacheEntry
 from synapse.storage.databases.main.search import SearchEntry
-from synapse.storage.engines.postgres import PostgresEngine
 from synapse.storage.util.id_generators import AbstractStreamIdGenerator
 from synapse.storage.util.sequence import SequenceGenerator
 from synapse.types import StateMap, get_domain_from_id
@@ -198,10 +197,12 @@ class PersistEventsStore:
             )
             persist_event_counter.inc(len(events_and_contexts))
 
-            if not use_negative_stream_ordering:
-                # we don't want to set the event_persisted_position to a negative
-                # stream_ordering.
-                synapse.metrics.event_persisted_position.set(stream)
+            if stream < 0:
+                # backfilled events have negative stream orderings, so we don't
+                # want to set the event_persisted_position to that.
+                synapse.metrics.event_persisted_position.set(
+                    events_and_contexts[-1][0].internal_metadata.stream_ordering
+                )
 
             for event, context in events_and_contexts:
                 if context.app_service:
@@ -364,20 +365,6 @@ class PersistEventsStore:
 
         min_stream_order = events_and_contexts[0][0].internal_metadata.stream_ordering
         max_stream_order = events_and_contexts[-1][0].internal_metadata.stream_ordering
-
-        # We check that the room still exists for events we're trying to
-        # persist. This is to protect against races with deleting a room.
-        #
-        # Annoyingly SQLite doesn't support row level locking.
-        if isinstance(self.database_engine, PostgresEngine):
-            for room_id in {e.room_id for e, _ in events_and_contexts}:
-                txn.execute(
-                    "SELECT room_version FROM rooms WHERE room_id = ? FOR SHARE",
-                    (room_id,),
-                )
-                row = txn.fetchone()
-                if row is None:
-                    raise Exception(f"Room does not exist {room_id}")
 
         # stream orderings should have been assigned by now
         assert min_stream_order
@@ -977,21 +964,6 @@ class PersistEventsStore:
                 ),
                 values=to_insert,
             )
-
-    async def update_current_state(
-        self,
-        room_id: str,
-        state_delta: DeltaState,
-        stream_id: int,
-    ) -> None:
-        """Update the current state stored in the datatabase for the given room"""
-
-        await self.db_pool.runInteraction(
-            "update_current_state",
-            self._update_current_state_txn,
-            state_delta_by_room={room_id: state_delta},
-            stream_id=stream_id,
-        )
 
     def _update_current_state_txn(
         self,
@@ -1773,13 +1745,6 @@ class PersistEventsStore:
                 (event.state_key,),
             )
 
-            # The `_get_membership_from_event_id` is immutable, except for the
-            # case where we look up an event *before* persisting it.
-            txn.call_after(
-                self.store._get_membership_from_event_id.invalidate,
-                (event.event_id,),
-            )
-
             # We update the local_current_membership table only if the event is
             # "current", i.e., its something that has just happened.
             #
@@ -1849,7 +1814,10 @@ class PersistEventsStore:
         if rel_type == RelationTypes.REPLACE:
             txn.call_after(self.store.get_applicable_edit.invalidate, (parent_id,))
 
-        if rel_type == RelationTypes.THREAD:
+        if (
+            rel_type == RelationTypes.THREAD
+            or rel_type == RelationTypes.UNSTABLE_THREAD
+        ):
             txn.call_after(self.store.get_thread_summary.invalidate, (parent_id,))
             # It should be safe to only invalidate the cache if the user has not
             # previously participated in the thread, but that's difficult (and

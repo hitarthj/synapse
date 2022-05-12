@@ -44,20 +44,21 @@ class DeactivateAccountTestCase(HomeserverTestCase):
         Deactivates the account `self.user` using `self.token` and asserts
         that it returns a 200 success code.
         """
-        req = self.make_request(
-            "POST",
-            "account/deactivate",
-            {
-                "auth": {
-                    "type": "m.login.password",
-                    "user": self.user,
-                    "password": "pass",
+        req = self.get_success(
+            self.make_request(
+                "POST",
+                "account/deactivate",
+                {
+                    "auth": {
+                        "type": "m.login.password",
+                        "user": self.user,
+                        "password": "pass",
+                    },
+                    "erase": True,
                 },
-                "erase": True,
-            },
-            access_token=self.token,
+                access_token=self.token,
+            )
         )
-
         self.assertEqual(req.code, HTTPStatus.OK, req)
 
     def test_global_account_data_deleted_upon_deactivation(self) -> None:

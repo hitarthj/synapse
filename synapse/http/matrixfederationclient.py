@@ -67,7 +67,6 @@ from synapse.http.client import (
     read_body_with_max_size,
 )
 from synapse.http.federation.matrix_federation_agent import MatrixFederationAgent
-from synapse.http.types import QueryParams
 from synapse.logging import opentracing
 from synapse.logging.context import make_deferred_yieldable, run_in_background
 from synapse.logging.opentracing import set_tag, start_active_span, tags
@@ -98,6 +97,10 @@ MAXINT = sys.maxsize
 
 
 _next_id = 1
+
+
+QueryArgs = Dict[str, Union[str, List[str]]]
+
 
 T = TypeVar("T")
 
@@ -141,7 +144,7 @@ class MatrixFederationRequest:
     """A callback to generate the JSON.
     """
 
-    query: Optional[QueryParams] = None
+    query: Optional[dict] = None
     """Query arguments.
     """
 
@@ -162,7 +165,10 @@ class MatrixFederationRequest:
 
         destination_bytes = self.destination.encode("ascii")
         path_bytes = self.path.encode("ascii")
-        query_bytes = encode_query_args(self.query)
+        if self.query:
+            query_bytes = encode_query_args(self.query)
+        else:
+            query_bytes = b""
 
         # The object is frozen so we can pre-compute this.
         uri = urllib.parse.urlunparse(
@@ -479,7 +485,10 @@ class MatrixFederationHttpClient:
         method_bytes = request.method.encode("ascii")
         destination_bytes = request.destination.encode("ascii")
         path_bytes = request.path.encode("ascii")
-        query_bytes = encode_query_args(request.query)
+        if request.query:
+            query_bytes = encode_query_args(request.query)
+        else:
+            query_bytes = b""
 
         scope = start_active_span(
             "outgoing-federation-request",
@@ -704,9 +713,6 @@ class MatrixFederationHttpClient:
         Returns:
             A list of headers to be added as "Authorization:" headers
         """
-        if destination is None and destination_is is None:
-            raise ValueError("destination and destination_is cannot both be None!")
-
         request: JsonDict = {
             "method": method.decode("ascii"),
             "uri": url_bytes.decode("ascii"),
@@ -729,13 +735,8 @@ class MatrixFederationHttpClient:
         for key, sig in request["signatures"][self.server_name].items():
             auth_headers.append(
                 (
-                    'X-Matrix origin=%s,key="%s",sig="%s",destination="%s"'
-                    % (
-                        self.server_name,
-                        key,
-                        sig,
-                        request.get("destination") or request["destination_is"],
-                    )
+                    'X-Matrix origin=%s,key="%s",sig="%s"'
+                    % (self.server_name, key, sig)
                 ).encode("ascii")
             )
         return auth_headers
@@ -745,7 +746,7 @@ class MatrixFederationHttpClient:
         self,
         destination: str,
         path: str,
-        args: Optional[QueryParams] = None,
+        args: Optional[QueryArgs] = None,
         data: Optional[JsonDict] = None,
         json_data_callback: Optional[Callable[[], JsonDict]] = None,
         long_retries: bool = False,
@@ -763,7 +764,7 @@ class MatrixFederationHttpClient:
         self,
         destination: str,
         path: str,
-        args: Optional[QueryParams] = None,
+        args: Optional[QueryArgs] = None,
         data: Optional[JsonDict] = None,
         json_data_callback: Optional[Callable[[], JsonDict]] = None,
         long_retries: bool = False,
@@ -780,7 +781,7 @@ class MatrixFederationHttpClient:
         self,
         destination: str,
         path: str,
-        args: Optional[QueryParams] = None,
+        args: Optional[QueryArgs] = None,
         data: Optional[JsonDict] = None,
         json_data_callback: Optional[Callable[[], JsonDict]] = None,
         long_retries: bool = False,
@@ -890,7 +891,7 @@ class MatrixFederationHttpClient:
         long_retries: bool = False,
         timeout: Optional[int] = None,
         ignore_backoff: bool = False,
-        args: Optional[QueryParams] = None,
+        args: Optional[QueryArgs] = None,
     ) -> Union[JsonDict, list]:
         """Sends the specified json data using POST
 
@@ -960,7 +961,7 @@ class MatrixFederationHttpClient:
         self,
         destination: str,
         path: str,
-        args: Optional[QueryParams] = None,
+        args: Optional[QueryArgs] = None,
         retry_on_dns_fail: bool = True,
         timeout: Optional[int] = None,
         ignore_backoff: bool = False,
@@ -975,7 +976,7 @@ class MatrixFederationHttpClient:
         self,
         destination: str,
         path: str,
-        args: Optional[QueryParams] = ...,
+        args: Optional[QueryArgs] = ...,
         retry_on_dns_fail: bool = ...,
         timeout: Optional[int] = ...,
         ignore_backoff: bool = ...,
@@ -989,7 +990,7 @@ class MatrixFederationHttpClient:
         self,
         destination: str,
         path: str,
-        args: Optional[QueryParams] = None,
+        args: Optional[QueryArgs] = None,
         retry_on_dns_fail: bool = True,
         timeout: Optional[int] = None,
         ignore_backoff: bool = False,
@@ -1084,7 +1085,7 @@ class MatrixFederationHttpClient:
         long_retries: bool = False,
         timeout: Optional[int] = None,
         ignore_backoff: bool = False,
-        args: Optional[QueryParams] = None,
+        args: Optional[QueryArgs] = None,
     ) -> Union[JsonDict, list]:
         """Send a DELETE request to the remote expecting some json response
 
@@ -1149,7 +1150,7 @@ class MatrixFederationHttpClient:
         destination: str,
         path: str,
         output_stream,
-        args: Optional[QueryParams] = None,
+        args: Optional[QueryArgs] = None,
         retry_on_dns_fail: bool = True,
         max_size: Optional[int] = None,
         ignore_backoff: bool = False,
